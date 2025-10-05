@@ -1,0 +1,364 @@
+<template>
+  <a-dropdown :trigger="['click']" placement="bottomRight">
+    <a-badge :count="unreadCount" :offset="[-5, 5]">
+      <a-button type="text" size="large" class="notification-button">
+        <BellOutlined />
+      </a-button>
+    </a-badge>
+
+    <template #overlay>
+      <div class="notification-panel">
+        <div class="notification-header">
+          <h4>通知中心</h4>
+          <a-space>
+            <a-button type="link" size="small" @click="markAllRead">
+              全部已读
+            </a-button>
+            <a-button type="link" size="small" @click="clearAll">
+              清空
+            </a-button>
+          </a-space>
+        </div>
+
+        <a-tabs v-model:activeKey="activeTab" size="small">
+          <a-tab-pane key="all" tab="全部">
+            <div class="notification-list">
+              <div
+                v-for="notification in allNotifications"
+                :key="notification.id"
+                class="notification-item"
+                :class="{ 'notification-unread': !notification.read }"
+                @click="handleNotificationClick(notification)"
+              >
+                <div class="notification-icon">
+                  <component
+                    :is="getNotificationIcon(notification.type)"
+                    :style="{ color: getNotificationColor(notification.type) }"
+                  />
+                </div>
+                
+                <div class="notification-content">
+                  <div class="notification-title">
+                    {{ notification.title }}
+                  </div>
+                  <div class="notification-desc">
+                    {{ notification.description }}
+                  </div>
+                  <div class="notification-time">
+                    {{ formatTime(notification.timestamp) }}
+                  </div>
+                </div>
+
+                <a-button
+                  type="text"
+                  size="small"
+                  class="notification-close"
+                  @click.stop="removeNotification(notification.id)"
+                >
+                  <CloseOutlined />
+                </a-button>
+              </div>
+
+              <a-empty
+                v-if="allNotifications.length === 0"
+                description="暂无通知"
+                :image="Empty.PRESENTED_IMAGE_SIMPLE"
+              />
+            </div>
+          </a-tab-pane>
+
+          <a-tab-pane key="mention" :tab="`@提及 (${mentionNotifications.length})`">
+            <div class="notification-list">
+              <div
+                v-for="notification in mentionNotifications"
+                :key="notification.id"
+                class="notification-item"
+                :class="{ 'notification-unread': !notification.read }"
+                @click="handleNotificationClick(notification)"
+              >
+                <div class="notification-icon">
+                  <UserOutlined style="color: #1890ff" />
+                </div>
+                
+                <div class="notification-content">
+                  <div class="notification-title">
+                    {{ notification.title }}
+                  </div>
+                  <div class="notification-desc">
+                    {{ notification.description }}
+                  </div>
+                  <div class="notification-time">
+                    {{ formatTime(notification.timestamp) }}
+                  </div>
+                </div>
+              </div>
+
+              <a-empty
+                v-if="mentionNotifications.length === 0"
+                description="暂无@提及"
+                :image="Empty.PRESENTED_IMAGE_SIMPLE"
+              />
+            </div>
+          </a-tab-pane>
+
+          <a-tab-pane key="system" :tab="`系统 (${systemNotifications.length})`">
+            <div class="notification-list">
+              <div
+                v-for="notification in systemNotifications"
+                :key="notification.id"
+                class="notification-item"
+                @click="handleNotificationClick(notification)"
+              >
+                <div class="notification-icon">
+                  <InfoCircleOutlined style="color: #52c41a" />
+                </div>
+                
+                <div class="notification-content">
+                  <div class="notification-title">
+                    {{ notification.title }}
+                  </div>
+                  <div class="notification-desc">
+                    {{ notification.description }}
+                  </div>
+                  <div class="notification-time">
+                    {{ formatTime(notification.timestamp) }}
+                  </div>
+                </div>
+              </div>
+
+              <a-empty
+                v-if="systemNotifications.length === 0"
+                description="暂无系统通知"
+                :image="Empty.PRESENTED_IMAGE_SIMPLE"
+              />
+            </div>
+          </a-tab-pane>
+        </a-tabs>
+      </div>
+    </template>
+  </a-dropdown>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue'
+import { Empty } from 'ant-design-vue'
+import {
+  BellOutlined,
+  UserOutlined,
+  TrophyOutlined,
+  InfoCircleOutlined,
+  CloseOutlined,
+  MessageOutlined,
+  FlagOutlined
+} from '@ant-design/icons-vue'
+import dayjs from 'dayjs'
+import relativeTime from 'dayjs/plugin/relativeTime'
+import 'dayjs/locale/zh-cn'
+
+dayjs.extend(relativeTime)
+dayjs.locale('zh-cn')
+
+const activeTab = ref('all')
+
+// 模拟通知数据
+const notifications = ref([
+  {
+    id: '1',
+    type: 'mention',
+    title: 'alice @了你',
+    description: '在消息中提到了你：@bob 这道题怎么做？',
+    timestamp: new Date(Date.now() - 300000),
+    read: false,
+    link: '/chat?messageId=123'
+  },
+  {
+    id: '2',
+    type: 'challenge',
+    title: '题目分配',
+    description: 'admin 给你分配了新题目：SQL注入进阶',
+    timestamp: new Date(Date.now() - 600000),
+    read: false,
+    link: '/challenges?id=456'
+  },
+  {
+    id: '3',
+    type: 'flag',
+    title: 'Flag提交成功',
+    description: '你提交的 Flag 正确！获得 500 分',
+    timestamp: new Date(Date.now() - 900000),
+    read: true,
+    link: '/challenges'
+  },
+  {
+    id: '4',
+    type: 'system',
+    title: '系统通知',
+    description: '频道已升级到新版本，新增@提及功能',
+    timestamp: new Date(Date.now() - 1800000),
+    read: true,
+    link: null
+  }
+])
+
+const allNotifications = computed(() => notifications.value)
+
+const mentionNotifications = computed(() => 
+  notifications.value.filter(n => n.type === 'mention')
+)
+
+const systemNotifications = computed(() => 
+  notifications.value.filter(n => n.type === 'system' || n.type === 'flag' || n.type === 'challenge')
+)
+
+const unreadCount = computed(() => 
+  notifications.value.filter(n => !n.read).length
+)
+
+const getNotificationIcon = (type) => {
+  const icons = {
+    mention: UserOutlined,
+    challenge: TrophyOutlined,
+    flag: FlagOutlined,
+    message: MessageOutlined,
+    system: InfoCircleOutlined
+  }
+  return icons[type] || InfoCircleOutlined
+}
+
+const getNotificationColor = (type) => {
+  const colors = {
+    mention: '#1890ff',
+    challenge: '#faad14',
+    flag: '#52c41a',
+    message: '#1890ff',
+    system: '#52c41a'
+  }
+  return colors[type] || '#1890ff'
+}
+
+const formatTime = (timestamp) => {
+  return dayjs(timestamp).fromNow()
+}
+
+const handleNotificationClick = (notification) => {
+  // 标记为已读
+  notification.read = true
+  
+  // 跳转到相关页面
+  if (notification.link) {
+    // router.push(notification.link)
+    console.log('Navigate to:', notification.link)
+  }
+}
+
+const markAllRead = () => {
+  notifications.value.forEach(n => n.read = true)
+}
+
+const clearAll = () => {
+  notifications.value = []
+}
+
+const removeNotification = (id) => {
+  const index = notifications.value.findIndex(n => n.id === id)
+  if (index > -1) {
+    notifications.value.splice(index, 1)
+  }
+}
+</script>
+
+<style scoped>
+.notification-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notification-panel {
+  width: 400px;
+  background: white;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.notification-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.notification-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.notification-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.notification-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  position: relative;
+}
+
+.notification-item:hover {
+  background-color: #f5f5f5;
+}
+
+.notification-item:hover .notification-close {
+  opacity: 1;
+}
+
+.notification-unread {
+  background-color: #e6f7ff;
+}
+
+.notification-icon {
+  flex-shrink: 0;
+  font-size: 20px;
+  margin-top: 4px;
+}
+
+.notification-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.85);
+  margin-bottom: 4px;
+}
+
+.notification-desc {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.65);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-time {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.notification-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+</style>
+
