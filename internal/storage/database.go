@@ -161,9 +161,8 @@ func (db *Database) migrateCacheDB() error {
 
 // migrateChannelDB 迁移频道数据库
 func (db *Database) migrateChannelDB() error {
-	// TODO: 实现全文搜索表的创建（FTS5）
-	// 目前先迁移基础表
-	return db.channelDB.AutoMigrate(
+	// 迁移基础表
+	if err := db.channelDB.AutoMigrate(
 		&models.Channel{},
 		&models.Member{},
 		&models.Message{},
@@ -179,7 +178,16 @@ func (db *Database) migrateChannelDB() error {
 		&models.ChallengeProgress{},
 		&models.ChallengeSubmission{},
 		&models.ChallengeHint{},
-	)
+	); err != nil {
+		return err
+	}
+
+	// 创建/修复消息全文索引（FTS5）
+	if err := db.ensureFTS5(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // GetChannelDB 获取频道数据库
@@ -195,6 +203,102 @@ func (db *Database) GetUserDB() *gorm.DB {
 // GetCacheDB 获取缓存数据库
 func (db *Database) GetCacheDB() *gorm.DB {
 	return db.cacheDB
+}
+
+// ==================== Repository方法 ====================
+
+// MessageRepo 获取消息仓库
+func (db *Database) MessageRepo() *MessageRepository {
+	return NewMessageRepository(db)
+}
+
+// FileRepo 获取文件仓库
+func (db *Database) FileRepo() *FileRepository {
+	return NewFileRepository(db)
+}
+
+// MemberRepo 获取成员仓库
+func (db *Database) MemberRepo() *MemberRepository {
+	return NewMemberRepository(db)
+}
+
+// ChallengeRepo 获取题目仓库
+func (db *Database) ChallengeRepo() *ChallengeRepository {
+	return NewChallengeRepository(db)
+}
+
+// ChallengeSubmissionRepo 获取题目提交仓库（使用ChallengeRepo代替）
+func (db *Database) ChallengeSubmissionRepo() *ChallengeRepository {
+	return NewChallengeRepository(db)
+}
+
+// ChannelRepo 获取频道仓库
+func (db *Database) ChannelRepo() *ChannelRepository {
+	return NewChannelRepository(db)
+}
+
+// AuditRepo 获取审计仓库
+func (db *Database) AuditRepo() *AuditRepository {
+	return NewAuditRepository(db)
+}
+
+// ensureFTS5 确保创建 FTS5 虚拟表与触发器
+func (db *Database) ensureFTS5() error {
+	// 检查是否已存在
+	type countRow struct{ C int64 }
+	var cnt countRow
+	if err := db.channelDB.Raw("SELECT count(1) as c FROM sqlite_master WHERE type='table' AND name='messages_fts'").Scan(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt.C == 0 {
+		// 创建 FTS5 虚拟表，索引 content_text, sender_nickname, tags
+		if err := db.channelDB.Exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                content_text,
+                sender_nickname,
+                tags,
+                content='messages',
+                content_rowid='rowid'
+            );
+        `).Error; err != nil {
+			return err
+		}
+		// 初始导入现有消息
+		if err := db.channelDB.Exec(`
+            INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
+            SELECT rowid, content_text, sender_nickname, json_extract(tags, '$') FROM messages;
+        `).Error; err != nil {
+			// 某些 SQLite 构建对 json_extract(tags, '$') 不兼容，回退为 tags 原文
+			_ = db.channelDB.Exec(`
+                INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
+                SELECT rowid, content_text, sender_nickname, tags FROM messages;
+            `).Error
+		}
+	}
+
+	// 触发器：插入/删除/更新 同步 FTS 表
+	stmts := []string{
+		`CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
+            VALUES (new.rowid, new.content_text, new.sender_nickname, new.tags);
+        END;`,
+		`CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content_text, sender_nickname, tags)
+            VALUES ('delete', old.rowid, old.content_text, old.sender_nickname, old.tags);
+        END;`,
+		`CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content_text, sender_nickname, tags)
+            VALUES ('delete', old.rowid, old.content_text, old.sender_nickname, old.tags);
+            INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
+            VALUES (new.rowid, new.content_text, new.sender_nickname, new.tags);
+        END;`,
+	}
+	for _, sql := range stmts {
+		if err := db.channelDB.Exec(sql).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close 关闭数据库连接
@@ -268,3 +372,340 @@ func (db *Database) Close() error {
 // - SaveCache() 保存缓存
 // - GetCache() 获取缓存
 // - CleanExpiredCache() 清理过期缓存
+
+// ==================== 频道（Channel） ====================
+
+// CreateChannel 创建频道
+func (db *Database) CreateChannel(channel *models.Channel) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChannelRepo().Create(channel)
+}
+
+// GetChannel 获取频道信息
+func (db *Database) GetChannel(channelID string) (*models.Channel, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.ChannelRepo().GetByID(channelID)
+}
+
+// UpdateChannel 更新频道
+func (db *Database) UpdateChannel(channel *models.Channel) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChannelRepo().Update(channel)
+}
+
+// DeleteChannel 删除频道
+func (db *Database) DeleteChannel(channelID string) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChannelRepo().Delete(channelID)
+}
+
+// ==================== 成员（Member） ====================
+
+// AddMember 添加成员
+func (db *Database) AddMember(member *models.Member) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.MemberRepo().Create(member)
+}
+
+// GetMembers 获取成员列表
+func (db *Database) GetMembers(channelID string) ([]*models.Member, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.MemberRepo().GetByChannelID(channelID)
+}
+
+// UpdateMemberStatus 更新成员状态
+func (db *Database) UpdateMemberStatus(memberID string, status models.UserStatus) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.MemberRepo().UpdateStatus(memberID, status)
+}
+
+// RemoveMember 移除成员
+func (db *Database) RemoveMember(memberID string) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.MemberRepo().Delete(memberID)
+}
+
+// ==================== 消息（Message） ====================
+
+// SaveMessage 保存消息
+func (db *Database) SaveMessage(message *models.Message) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	if err := db.MessageRepo().Create(message); err != nil {
+		return err
+	}
+	// 更新统计（容错处理）
+	_ = db.ChannelRepo().IncrementMessageCount(message.ChannelID)
+	_ = db.MemberRepo().IncrementMessageCount(message.SenderID)
+	return nil
+}
+
+// GetMessages 获取消息列表（分页）
+func (db *Database) GetMessages(channelID string, limit, offset int) ([]*models.Message, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.MessageRepo().GetByChannelID(channelID, limit, offset)
+}
+
+// SearchMessages 搜索消息（如果FTS表不存在则回退到LIKE）
+func (db *Database) SearchMessages(channelID, keyword string, limit, offset int) ([]*models.Message, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+
+	if keyword == "" {
+		return db.GetMessages(channelID, limit, offset)
+	}
+
+	// 优先尝试使用 FTS5 虚拟表 messages_fts
+	type countRow struct{ C int64 }
+	var cnt countRow
+	// 检测虚拟表是否存在
+	err := db.channelDB.Raw("SELECT count(1) as c FROM sqlite_master WHERE type='table' AND name='messages_fts'").Scan(&cnt).Error
+	if err != nil {
+		return nil, err
+	}
+
+	var messages []*models.Message
+	if cnt.C > 0 {
+		// 使用 FTS 搜索
+		err = db.channelDB.Raw(`
+            SELECT m.* FROM messages m
+            JOIN messages_fts fts ON m.rowid = fts.rowid
+            WHERE fts MATCH ? AND m.channel_id = ? AND m.deleted = 0
+            ORDER BY m.timestamp DESC
+            LIMIT ? OFFSET ?
+        `, keyword, channelID, limit, offset).Scan(&messages).Error
+		if err != nil {
+			return nil, err
+		}
+		return messages, nil
+	}
+
+	// 回退：LIKE 搜索（content_text / sender_nickname / tags）
+	like := "%" + keyword + "%"
+	err = db.channelDB.Where("channel_id = ? AND deleted = 0 AND (content_text LIKE ? OR sender_nickname LIKE ? OR tags LIKE ?)",
+		channelID, like, like, like).
+		Order("timestamp DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&messages).Error
+	if err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// DeleteMessage 删除消息（软删除）
+func (db *Database) DeleteMessage(messageID, deletedBy string) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.MessageRepo().Delete(messageID, deletedBy)
+}
+
+// ==================== 文件（File） ====================
+
+// SaveFile 保存文件
+func (db *Database) SaveFile(file *models.File) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	if err := db.FileRepo().Create(file); err != nil {
+		return err
+	}
+	// 更新统计（容错处理）
+	_ = db.ChannelRepo().IncrementFileCount(file.ChannelID)
+	_ = db.MemberRepo().IncrementFilesShared(file.SenderID)
+	return nil
+}
+
+// GetFile 获取文件
+func (db *Database) GetFile(fileID string) (*models.File, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.FileRepo().GetByID(fileID)
+}
+
+// GetFiles 获取文件列表
+func (db *Database) GetFiles(channelID string, limit, offset int) ([]*models.File, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.FileRepo().GetByChannelID(channelID, limit, offset)
+}
+
+// ==================== 题目（Challenge） ====================
+
+// CreateChallenge 创建题目
+func (db *Database) CreateChallenge(ch *models.Challenge) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChallengeRepo().Create(ch)
+}
+
+// GetChallenges 获取题目列表
+func (db *Database) GetChallenges(channelID string) ([]*models.Challenge, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.ChallengeRepo().GetByChannelID(channelID)
+}
+
+// AssignChallenge 分配题目
+func (db *Database) AssignChallenge(assignment *models.ChallengeAssignment) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChallengeRepo().AssignChallenge(assignment)
+}
+
+// SubmitFlag 提交 Flag
+func (db *Database) SubmitFlag(submission *models.ChallengeSubmission) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChallengeRepo().SubmitFlag(submission)
+}
+
+// UpdateProgress 更新进度
+func (db *Database) UpdateProgress(progress *models.ChallengeProgress) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChallengeRepo().UpdateProgress(progress)
+}
+
+// ==================== 审计日志（Audit） ====================
+
+// SaveAuditLog 保存审计日志
+func (db *Database) SaveAuditLog(log *models.AuditLog) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.AuditRepo().Log(log)
+}
+
+// GetAuditLogs 获取审计日志
+func (db *Database) GetAuditLogs(channelID string, limit, offset int) ([]*models.AuditLog, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.AuditRepo().GetByChannelID(channelID, limit, offset)
+}
+
+// ==================== 管理（禁言/置顶） ====================
+
+// MuteMember 禁言成员
+func (db *Database) MuteMember(record *models.MuteRecord) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.MemberRepo().MuteMember(record)
+}
+
+// UnmuteMember 解除禁言
+func (db *Database) UnmuteMember(memberID, unmutedBy string) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.MemberRepo().UnmuteMember(memberID, unmutedBy)
+}
+
+// IsMuted 检查是否被禁言
+func (db *Database) IsMuted(memberID string) (bool, error) {
+	if db.channelDB == nil {
+		return false, fmt.Errorf("channel database is not opened")
+	}
+	return db.MemberRepo().IsMuted(memberID)
+}
+
+// PinMessage 置顶消息
+func (db *Database) PinMessage(channelID, messageID, pinnedBy, reason string) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChannelRepo().PinMessage(channelID, messageID, pinnedBy, reason)
+}
+
+// UnpinMessage 取消置顶
+func (db *Database) UnpinMessage(channelID, messageID string) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+	return db.ChannelRepo().UnpinMessage(channelID, messageID)
+}
+
+// GetPinnedMessages 获取置顶消息
+func (db *Database) GetPinnedMessages(channelID string) ([]*models.PinnedMessage, error) {
+	if db.channelDB == nil {
+		return nil, fmt.Errorf("channel database is not opened")
+	}
+	return db.ChannelRepo().GetPinnedMessages(channelID)
+}
+
+// ==================== 缓存（Cache） ====================
+
+// SaveCache 保存缓存（带过期时间）
+func (db *Database) SaveCache(key string, value []byte, ttl time.Duration) error {
+	if db.cacheDB == nil {
+		return fmt.Errorf("cache database is not opened")
+	}
+	entry := &models.CacheEntry{
+		Key:       key,
+		Value:     value,
+		ExpiresAt: time.Now().Add(ttl),
+		CreatedAt: time.Now(),
+	}
+	return db.cacheDB.Save(entry).Error
+}
+
+// GetCache 获取缓存（返回值, 是否命中, 错误）
+func (db *Database) GetCache(key string) ([]byte, bool, error) {
+	if db.cacheDB == nil {
+		return nil, false, fmt.Errorf("cache database is not opened")
+	}
+	var entry models.CacheEntry
+	err := db.cacheDB.Where("key = ?", key).First(&entry).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if entry.IsExpired() {
+		// 过期即视为未命中并尝试清理
+		_ = db.cacheDB.Where("key = ?", key).Delete(&models.CacheEntry{}).Error
+		return nil, false, nil
+	}
+	return entry.Value, true, nil
+}
+
+// CleanExpiredCache 清理过期缓存
+func (db *Database) CleanExpiredCache() error {
+	if db.cacheDB == nil {
+		return fmt.Errorf("cache database is not opened")
+	}
+	now := time.Now()
+	return db.cacheDB.Where("expires_at < ?", now).Delete(&models.CacheEntry{}).Error
+}

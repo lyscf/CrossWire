@@ -15,19 +15,26 @@ type Message struct {
 	Type           MessageType    `gorm:"type:text;not null" json:"type"`
 	Content        MessageContent `gorm:"type:text;not null" json:"content"`
 	ContentText    string         `gorm:"type:text" json:"content_text,omitempty"` // 用于全文搜索
-	ReplyToID      string         `gorm:"type:text;index:idx_messages_reply_to" json:"reply_to_id,omitempty"`
+	ReplyToID      *string        `gorm:"type:text;index:idx_messages_reply_to" json:"reply_to_id,omitempty"`
 	ThreadID       string         `gorm:"type:text;index:idx_messages_thread" json:"thread_id,omitempty"`
 	Mentions       StringArray    `gorm:"type:text" json:"mentions,omitempty"`
 	Tags           StringArray    `gorm:"type:text" json:"tags,omitempty"`
-	Pinned         bool           `gorm:"type:integer;default:0;index:idx_messages_pinned" json:"pinned"`
-	Deleted        bool           `gorm:"type:integer;default:0;index:idx_messages_deleted" json:"deleted"`
-	DeletedBy      string         `gorm:"type:text" json:"deleted_by,omitempty"`
-	DeletedAt      *time.Time     `gorm:"type:integer" json:"deleted_at,omitempty"`
-	Timestamp      time.Time      `gorm:"type:integer;not null;index:idx_messages_channel_time" json:"timestamp"`
-	EditedAt       *time.Time     `gorm:"type:integer" json:"edited_at,omitempty"`
-	Encrypted      bool           `gorm:"type:integer;default:1" json:"encrypted"`
-	KeyVersion     int            `gorm:"type:integer;default:1" json:"key_version"`
-	Metadata       JSONField      `gorm:"type:text" json:"metadata,omitempty"`
+
+	// APP层使用的字段（兼容）
+	IsEdited  bool `gorm:"type:integer;default:0;index:idx_messages_edited" json:"is_edited"`
+	IsDeleted bool `gorm:"type:integer;default:0;index:idx_messages_is_deleted" json:"is_deleted"`
+	IsPinned  bool `gorm:"type:integer;default:0;index:idx_messages_is_pinned" json:"is_pinned"`
+
+	// 原有字段
+	Pinned     bool       `gorm:"type:integer;default:0;index:idx_messages_pinned" json:"pinned"`
+	Deleted    bool       `gorm:"type:integer;default:0;index:idx_messages_deleted" json:"deleted"`
+	DeletedBy  string     `gorm:"type:text" json:"deleted_by,omitempty"`
+	DeletedAt  *time.Time `gorm:"type:integer" json:"deleted_at,omitempty"`
+	Timestamp  time.Time  `gorm:"type:integer;not null;index:idx_messages_channel_time" json:"timestamp"`
+	EditedAt   *time.Time `gorm:"type:integer" json:"edited_at,omitempty"`
+	Encrypted  bool       `gorm:"type:integer;default:1" json:"encrypted"`
+	KeyVersion int        `gorm:"type:integer;default:1" json:"key_version"`
+	Metadata   JSONField  `gorm:"type:text" json:"metadata,omitempty"`
 
 	// 题目聊天室支持
 	ChallengeID string `gorm:"type:text;index:idx_messages_challenge" json:"challenge_id,omitempty"`
@@ -53,6 +60,27 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 	if m.RoomType == "" {
 		m.RoomType = "main"
 	}
+	// 同步兼容字段
+	m.IsEdited = m.EditedAt != nil
+	m.IsDeleted = m.Deleted
+	m.IsPinned = m.Pinned
+	return nil
+}
+
+// AfterFind GORM 钩子 - 同步兼容字段
+func (m *Message) AfterFind(tx *gorm.DB) error {
+	m.IsEdited = m.EditedAt != nil
+	m.IsDeleted = m.Deleted
+	m.IsPinned = m.Pinned
+	return nil
+}
+
+// BeforeUpdate GORM 钩子
+func (m *Message) BeforeUpdate(tx *gorm.DB) error {
+	// 同步兼容字段
+	m.IsEdited = m.EditedAt != nil
+	m.IsDeleted = m.Deleted
+	m.IsPinned = m.Pinned
 	return nil
 }
 

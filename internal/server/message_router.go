@@ -195,6 +195,15 @@ func (mr *MessageRouter) processMessageTask(task *MessageTask) {
 		}
 	}
 
+	// 7.5. 反垃圾消息检测
+	if isSpam, reason := mr.server.spamDetector.CheckMessage(&msg, msg.SenderID); isSpam {
+		mr.server.logger.Warn("[MessageRouter] Spam message detected from %s: %s", msg.SenderID, reason)
+		mr.server.stats.mutex.Lock()
+		mr.server.stats.RejectedMessages++
+		mr.server.stats.mutex.Unlock()
+		return
+	}
+
 	// 8. 补充消息元数据
 	msg.ChannelID = mr.server.config.ChannelID
 	if msg.Timestamp.IsZero() {

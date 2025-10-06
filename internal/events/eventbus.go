@@ -18,6 +18,7 @@ const (
 	EventMessageDeleted  EventType = "message:deleted"  // 消息被删除
 	EventMessagePinned   EventType = "message:pinned"   // 消息被置顶
 	EventMessageEdited   EventType = "message:edited"   // 消息被编辑
+	EventMessageUpdated  EventType = "message:updated"  // 消息被更新（通用）
 
 	// ===== 成员相关事件 =====
 	EventMemberJoined      EventType = "member:joined"       // 成员加入
@@ -28,6 +29,7 @@ const (
 	EventMemberBanned      EventType = "member:banned"       // 成员被封禁
 	EventMemberUnbanned    EventType = "member:unbanned"     // 成员解除封禁
 	EventMemberRoleChanged EventType = "member:role_changed" // 成员角色变更
+	EventMemberUpdated     EventType = "member:updated"      // 成员信息更新（通用）
 
 	// ===== 状态相关事件 =====
 	EventStatusChanged EventType = "status:changed" // 状态变化
@@ -35,9 +37,16 @@ const (
 	EventTypingStop    EventType = "typing:stop"    // 停止输入
 
 	// ===== 文件相关事件 =====
-	EventFileUploaded   EventType = "file:uploaded"   // 文件上传完成
-	EventFileDownloaded EventType = "file:downloaded" // 文件下载完成
-	EventFileProgress   EventType = "file:progress"   // 文件传输进度
+	EventFileUploaded          EventType = "file:uploaded"           // 文件上传完成
+	EventFileDownloaded        EventType = "file:downloaded"         // 文件下载完成
+	EventFileProgress          EventType = "file:progress"           // 文件传输进度
+	EventFileUploadStarted     EventType = "file:upload:started"     // 文件上传开始
+	EventFileUploadProgress    EventType = "file:upload:progress"    // 文件上传进度
+	EventFileUploadFailed      EventType = "file:upload:failed"      // 文件上传失败
+	EventFileDownloadStarted   EventType = "file:download:started"   // 文件下载开始
+	EventFileDownloadProgress  EventType = "file:download:progress"  // 文件下载进度
+	EventFileDownloadCompleted EventType = "file:download:completed" // 文件下载完成
+	EventFileDownloadFailed    EventType = "file:download:failed"    // 文件下载失败
 
 	// ===== 频道相关事件 =====
 	EventChannelCreated EventType = "channel:created" // 频道创建
@@ -50,6 +59,8 @@ const (
 	EventSystemConnected  EventType = "system:connected"  // 连接成功
 	EventSystemDisconnect EventType = "system:disconnect" // 连接断开
 	EventSystemReconnect  EventType = "system:reconnect"  // 重新连接
+	// 兼容：通用系统消息
+	EventSystemMessage EventType = "system:message"
 
 	// ===== CTF挑战相关事件 =====
 	EventChallengeCreated    EventType = "challenge:created"   // 题目创建
@@ -58,6 +69,7 @@ const (
 	EventChallengeSolved     EventType = "challenge:solved"    // 题目完成
 	EventChallengeHintUnlock EventType = "challenge:hint"      // 提示解锁
 	EventChallengeProgress   EventType = "challenge:progress"  // 题目进度更新
+	EventChallengeUpdated    EventType = "challenge:updated"   // 题目更新
 )
 
 // Event 事件

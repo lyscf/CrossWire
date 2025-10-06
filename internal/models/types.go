@@ -19,11 +19,15 @@ const (
 // Role 成员角色
 type Role string
 
+// MemberRole 成员角色别名（用于APP层）
+type MemberRole = Role
+
 const (
-	RoleOwner    Role = "owner"
-	RoleAdmin    Role = "admin"
-	RoleMember   Role = "member"
-	RoleReadOnly Role = "readonly"
+	RoleOwner     Role = "owner"
+	RoleAdmin     Role = "admin"
+	RoleModerator Role = "moderator"
+	RoleMember    Role = "member"
+	RoleReadOnly  Role = "readonly"
 )
 
 // UserStatus 用户在线状态

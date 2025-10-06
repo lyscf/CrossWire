@@ -201,8 +201,42 @@ func (r *MessageRepository) CleanExpiredTypingStatus() error {
 		Delete(&models.TypingStatus{}).Error
 }
 
+// Search 全文搜索消息（优先 FTS5，回退 LIKE）
+func (r *MessageRepository) Search(channelID, keyword string, limit, offset int) ([]*models.Message, error) {
+	if keyword == "" {
+		return r.GetByChannelID(channelID, limit, offset)
+	}
+	type countRow struct{ C int64 }
+	var cnt countRow
+	if err := r.db.GetChannelDB().Raw("SELECT count(1) as c FROM sqlite_master WHERE type='table' AND name='messages_fts'").Scan(&cnt).Error; err != nil {
+		return nil, err
+	}
+	var messages []*models.Message
+	if cnt.C > 0 {
+		if err := r.db.GetChannelDB().Raw(`
+			SELECT m.* FROM messages m
+			JOIN messages_fts fts ON m.rowid = fts.rowid
+			WHERE fts MATCH ? AND m.channel_id = ? AND m.deleted = 0
+			ORDER BY m.timestamp DESC
+			LIMIT ? OFFSET ?
+		`, keyword, channelID, limit, offset).Scan(&messages).Error; err != nil {
+			return nil, err
+		}
+		return messages, nil
+	}
+	like := "%" + keyword + "%"
+	if err := r.db.GetChannelDB().Where("channel_id = ? AND deleted = 0 AND (content_text LIKE ? OR sender_nickname LIKE ? OR tags LIKE ?)",
+		channelID, like, like, like).
+		Order("timestamp DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
 // TODO: 实现以下方法
-// - SearchMessages() 全文搜索消息（使用FTS5）
 // - GetMessagesByTimeRange() 按时间范围获取消息
 // - GetMessagesByTag() 按标签获取消息
 // - GetMentionedMessages() 获取@我的消息

@@ -521,6 +521,105 @@ func (c *Client) GetMembers() ([]*models.Member, error) {
 	return c.memberRepo.GetByChannelID(c.config.ChannelID)
 }
 
+// UpdateStatus 更新本地成员在线状态并上报给服务器
+func (c *Client) UpdateStatus(status models.UserStatus) error {
+	c.mutex.RLock()
+	running := c.isRunning
+	c.mutex.RUnlock()
+	if !running {
+		return fmt.Errorf("client is not running")
+	}
+	if c.memberID == "" {
+		return fmt.Errorf("member id is empty")
+	}
+
+	// 读取旧状态（容错处理）
+	oldStatus := models.StatusOffline
+	if member, err := c.memberRepo.GetByID(c.memberID); err == nil && member != nil {
+		oldStatus = member.Status
+	}
+
+	// 更新本地数据库状态
+	if err := c.memberRepo.UpdateStatus(c.memberID, status); err != nil {
+		return fmt.Errorf("failed to update status in db: %w", err)
+	}
+
+	// 发送控制消息到服务器
+	payload := map[string]interface{}{
+		"type":       "status.update",
+		"channel_id": c.config.ChannelID,
+		"member_id":  c.memberID,
+		"status":     status,
+		"timestamp":  time.Now().Unix(),
+	}
+	reqJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal status update: %w", err)
+	}
+
+	encrypted, err := c.crypto.EncryptMessage(reqJSON)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt status update: %w", err)
+	}
+
+	msg := &transport.Message{
+		Type:      transport.MessageTypeControl,
+		SenderID:  c.memberID,
+		Payload:   encrypted,
+		Timestamp: time.Now(),
+	}
+	if err := c.transport.SendMessage(msg); err != nil {
+		return fmt.Errorf("failed to send status update: %w", err)
+	}
+
+	// 发布本地事件
+	c.eventBus.Publish(events.EventStatusChanged, events.NewStatusChangedEvent(
+		c.memberID, c.config.ChannelID, oldStatus, status,
+	))
+
+	return nil
+}
+
+// UpdateProfile 更新本地成员资料（昵称/头像）
+func (c *Client) UpdateProfile(nickname string, avatar string) error {
+	if c.memberID == "" {
+		return fmt.Errorf("member id is empty")
+	}
+
+	// 读取成员并更新字段
+	member, err := c.memberRepo.GetByID(c.memberID)
+	if err != nil {
+		return fmt.Errorf("failed to load member: %w", err)
+	}
+	if nickname != "" {
+		member.Nickname = nickname
+	}
+	if avatar != "" {
+		member.Avatar = avatar
+	}
+
+	if err := c.memberRepo.Update(member); err != nil {
+		return fmt.Errorf("failed to update profile in db: %w", err)
+	}
+
+	// 更新客户端配置（用于后续会话）
+	if nickname != "" {
+		c.config.Nickname = nickname
+	}
+	if avatar != "" {
+		c.config.Avatar = avatar
+	}
+
+	// 发布成员更新事件
+	c.eventBus.Publish(events.EventMemberUpdated, &events.MemberEvent{
+		Member:    member,
+		ChannelID: c.config.ChannelID,
+		Action:    "updated",
+	})
+
+	return nil
+}
+
 // GetStats 获取统计信息
 func (c *Client) GetStats() ClientStats {
 	c.stats.mutex.RLock()
@@ -548,6 +647,40 @@ func (c *Client) IsRunning() bool {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return c.isRunning
+}
+
+// ===== 辅助Getter =====
+
+// GetChannelID 获取频道ID
+func (c *Client) GetChannelID() string {
+	if c.config == nil {
+		return ""
+	}
+	return c.config.ChannelID
+}
+
+// IsConnected 检查传输连接状态
+func (c *Client) IsConnected() bool {
+	if c.transport == nil {
+		return false
+	}
+	return c.transport.IsConnected()
+}
+
+// GetConnectTime 获取连接时间
+func (c *Client) GetConnectTime() time.Time {
+	c.stats.mutex.RLock()
+	defer c.stats.mutex.RUnlock()
+	return c.stats.ConnectedAt
+}
+
+// GetChannelInfo 获取频道信息（最小集）
+func (c *Client) GetChannelInfo() *models.Channel {
+	return &models.Channel{
+		ID:            c.GetChannelID(),
+		Name:          "",
+		TransportMode: c.config.TransportMode,
+	}
 }
 
 // ===== 文件传输相关 =====

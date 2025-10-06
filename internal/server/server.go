@@ -33,6 +33,7 @@ type Server struct {
 	authManager      *AuthManager
 	challengeManager *ChallengeManager
 	offlineManager   *OfflineManager
+	spamDetector     *SpamDetector
 
 	// 基础设施
 	transport transport.Transport
@@ -102,6 +103,18 @@ type ServerStats struct {
 	DroppedMessages  uint64
 	RejectedMessages uint64
 	mutex            sync.RWMutex
+}
+
+// ServerStatsDTO 面向外部使用的统计信息（不包含锁）
+type ServerStatsDTO struct {
+	StartTime        time.Time `json:"start_time"`
+	TotalMembers     int       `json:"total_members"`
+	OnlineMembers    int       `json:"online_members"`
+	TotalMessages    uint64    `json:"total_messages"`
+	TotalBroadcasts  uint64    `json:"total_broadcasts"`
+	TotalBytes       uint64    `json:"total_bytes"`
+	DroppedMessages  uint64    `json:"dropped_messages"`
+	RejectedMessages uint64    `json:"rejected_messages"`
 }
 
 // DefaultServerConfig 默认配置
@@ -206,6 +219,7 @@ func NewServer(
 	s.authManager = NewAuthManager(s)
 	s.challengeManager = NewChallengeManager(s)
 	s.offlineManager = NewOfflineManager(s)
+	s.spamDetector = NewSpamDetector(s)
 
 	return s, nil
 }
@@ -398,6 +412,8 @@ func (s *Server) handleControlMessage(msg *transport.Message) {
 		s.messageRouter.HandleFileChunk(msg)
 	case "file.download":
 		s.messageRouter.HandleFileDownloadRequest(msg)
+	case "ack":
+		s.handleMessageAck(msg)
 	default:
 		s.logger.Warn("[Server] Unknown control message type: %s", msgType.Type)
 	}
@@ -437,6 +453,27 @@ func (s *Server) MuteMember(memberID string, duration time.Duration, reason stri
 // UnmuteMember 解除禁言
 func (s *Server) UnmuteMember(memberID string) error {
 	return s.channelManager.UnmuteMember(memberID)
+}
+
+// KickMember 踢出成员（包装到 ChannelManager）
+func (s *Server) KickMember(memberID string, reason string) error {
+	// 简化：由服务器作为操作者
+	return s.channelManager.KickMember(memberID, reason, "server")
+}
+
+// BanMember 封禁成员（包装到 ChannelManager）
+func (s *Server) BanMember(memberID string, reason string, duration time.Duration) error {
+	return s.channelManager.BanMember(memberID, reason, "server", duration)
+}
+
+// UnbanMember 解封成员（包装到 ChannelManager）
+func (s *Server) UnbanMember(memberID string) error {
+	return s.channelManager.UnbanMember(memberID)
+}
+
+// UpdateMemberRole 更新成员角色（包装到 ChannelManager）
+func (s *Server) UpdateMemberRole(memberID string, role models.Role) error {
+	return s.channelManager.UpdateMemberRole(memberID, role)
 }
 
 // GetChannel 获取频道信息
@@ -480,12 +517,12 @@ func (s *Server) announceService() error {
 }
 
 // GetStats 获取统计信息
-func (s *Server) GetStats() ServerStats {
+func (s *Server) GetStats() ServerStatsDTO {
 	s.stats.mutex.RLock()
 	defer s.stats.mutex.RUnlock()
 
-	// 复制统计数据（避免复制锁）
-	stats := ServerStats{
+	// 汇总为无锁 DTO
+	return ServerStatsDTO{
 		StartTime:        s.startTime,
 		TotalMembers:     s.channelManager.GetTotalCount(),
 		OnlineMembers:    s.channelManager.GetOnlineCount(),
@@ -495,8 +532,6 @@ func (s *Server) GetStats() ServerStats {
 		DroppedMessages:  s.stats.DroppedMessages,
 		RejectedMessages: s.stats.RejectedMessages,
 	}
-
-	return stats
 }
 
 // IsRunning 检查是否运行中
@@ -536,10 +571,203 @@ func (s *Server) statsReporter() {
 	}
 }
 
-// TODO: 实现以下功能
-// - 消息持久化到离线队列
-// - 消息确认（ACK）机制
-// - 频率限制细节
-// - 反垃圾消息
-// - 成员踢出与封禁
-// - 权限分级（管理员/普通成员）
+// handleMessageAck 处理消息确认
+// 参考: docs/PROTOCOL.md - 消息确认机制
+func (s *Server) handleMessageAck(msg *transport.Message) {
+	// 解密ACK消息
+	decrypted, err := s.crypto.DecryptMessage(msg.Payload)
+	if err != nil {
+		s.logger.Error("[Server] Failed to decrypt ACK message: %v", err)
+		return
+	}
+
+	// 解析ACK内容
+	var ackMsg struct {
+		Type      string `json:"type"`
+		MessageID string `json:"message_id"`
+		MemberID  string `json:"member_id"`
+		Timestamp int64  `json:"timestamp"`
+	}
+
+	if err := json.Unmarshal(decrypted, &ackMsg); err != nil {
+		s.logger.Error("[Server] Failed to unmarshal ACK message: %v", err)
+		return
+	}
+
+	// 验证成员
+	if !s.channelManager.HasMember(ackMsg.MemberID) {
+		s.logger.Warn("[Server] ACK from unknown member: %s", ackMsg.MemberID)
+		return
+	}
+
+	// 记录ACK
+	s.broadcastManager.RecordAck(ackMsg.MessageID, ackMsg.MemberID)
+
+	s.logger.Debug("[Server] ACK recorded: message=%s, member=%s", ackMsg.MessageID, ackMsg.MemberID)
+}
+
+// CheckPermission 检查成员权限
+// 参考: docs/ARCHITECTURE.md - 权限分级
+func (s *Server) CheckPermission(memberID string, requiredRole models.Role) bool {
+	return s.authManager.CheckPermission(memberID, requiredRole)
+}
+
+// HasAdminPermission 检查是否有管理员权限
+func (s *Server) HasAdminPermission(memberID string) bool {
+	member := s.channelManager.GetMemberByID(memberID)
+	if member == nil {
+		return false
+	}
+	return member.Role == models.RoleAdmin || member.Role == models.RoleOwner
+}
+
+// HasModeratorPermission 检查是否有管理权限（管理员或协管）
+func (s *Server) HasModeratorPermission(memberID string) bool {
+	member := s.channelManager.GetMemberByID(memberID)
+	if member == nil {
+		return false
+	}
+	return member.Role == models.RoleAdmin ||
+		member.Role == models.RoleOwner ||
+		member.Role == models.RoleModerator
+}
+
+// GetOfflineMessageStats 获取离线消息统计
+func (s *Server) GetOfflineMessageStats() map[string]interface{} {
+	stats := s.offlineManager.GetStats()
+	return map[string]interface{}{
+		"total_queued":         stats.TotalQueued,
+		"total_delivered":      stats.TotalDelivered,
+		"total_expired":        stats.TotalExpired,
+		"current_queued_count": stats.CurrentQueuedCount,
+	}
+}
+
+// GetBroadcastStats 获取广播统计
+func (s *Server) GetBroadcastStats() map[string]interface{} {
+	stats := s.broadcastManager.GetStats()
+	return map[string]interface{}{
+		"total_broadcasts":  stats.TotalBroadcasts,
+		"failed_broadcasts": stats.FailedBroadcasts,
+		"average_latency":   stats.AverageLatency.String(),
+	}
+}
+
+// GetMessageRouterStats 获取消息路由统计
+func (s *Server) GetMessageRouterStats() map[string]interface{} {
+	return s.messageRouter.GetSyncStats()
+}
+
+// DeliverOfflineMessagesToMember 投递离线消息给指定成员
+// 当成员重新上线时调用
+func (s *Server) DeliverOfflineMessagesToMember(memberID string) error {
+	return s.offlineManager.DeliverOfflineMessages(memberID)
+}
+
+// GetSpamDetectorStats 获取反垃圾统计
+func (s *Server) GetSpamDetectorStats() map[string]interface{} {
+	stats := s.spamDetector.GetStats()
+	return map[string]interface{}{
+		"total_checked":       stats.TotalChecked,
+		"duplicate_detected":  stats.DuplicateDetected,
+		"blacklist_detected":  stats.BlacklistDetected,
+		"rapid_post_detected": stats.RapidPostDetected,
+		"similarity_detected": stats.SimilarityDetected,
+	}
+}
+
+// AddBlacklistWord 添加黑名单关键词
+func (s *Server) AddBlacklistWord(word string) {
+	s.spamDetector.AddBlacklistWord(word)
+}
+
+// RemoveBlacklistWord 移除黑名单关键词
+func (s *Server) RemoveBlacklistWord(word string) {
+	s.spamDetector.RemoveBlacklistWord(word)
+}
+
+// GetBlacklistWords 获取黑名单关键词列表
+func (s *Server) GetBlacklistWords() []string {
+	return s.spamDetector.GetBlacklistWords()
+}
+
+// ===== 挑战系统包装方法 =====
+
+// CreateChallenge 创建题目
+func (s *Server) CreateChallenge(challenge *models.Challenge) error {
+	return s.challengeManager.CreateChallenge(challenge)
+}
+
+// GetChallenges 获取所有题目
+func (s *Server) GetChallenges() ([]*models.Challenge, error) {
+	return s.challengeRepo.GetByChannelID(s.config.ChannelID)
+}
+
+// GetChallenge 获取单个题目
+func (s *Server) GetChallenge(challengeID string) (*models.Challenge, error) {
+	return s.challengeRepo.GetByID(challengeID)
+}
+
+// UpdateChallenge 更新题目
+func (s *Server) UpdateChallenge(challenge *models.Challenge) error {
+	return s.challengeRepo.Update(challenge)
+}
+
+// DeleteChallenge 删除题目
+func (s *Server) DeleteChallenge(challengeID string) error {
+	return s.challengeRepo.Delete(challengeID)
+}
+
+// AssignChallenge 分配题目
+func (s *Server) AssignChallenge(challengeID, memberID, assignedBy string) error {
+	return s.challengeManager.AssignChallenge(challengeID, memberID, assignedBy)
+}
+
+// SubmitFlag 提交Flag
+func (s *Server) SubmitFlag(challengeID, memberID, flag string) error {
+	return s.challengeManager.SubmitFlag(challengeID, memberID, flag)
+}
+
+// GetChallengeProgress 获取题目进度
+func (s *Server) GetChallengeProgress(challengeID, memberID string) (*models.ChallengeProgress, error) {
+	return s.challengeRepo.GetProgress(challengeID, memberID)
+}
+
+// UpdateChallengeProgress 更新题目进度
+func (s *Server) UpdateChallengeProgress(progress *models.ChallengeProgress) error {
+	return s.challengeRepo.UpdateProgress(progress)
+}
+
+// 注意：排行榜和统计功能已禁用（用户不需要）
+
+// ===== 实现说明 =====
+//
+// 1. 消息持久化到离线队列 ✓
+//    - 实现位置: OfflineManager.StoreOfflineMessage()
+//    - 参考: internal/server/offline_manager.go:68-112
+//    - 功能: 自动持久化到数据库，队列满时删除最旧消息
+//
+// 2. 消息确认（ACK）机制 ✓
+//    - 实现位置: handleMessageAck(), BroadcastManager.RecordAck()
+//    - 参考: internal/server/broadcast_manager.go:236-257
+//    - 功能: 记录每个成员的消息确认状态
+//
+// 3. 频率限制细节 ✓
+//    - 实现位置: RateLimiter.Allow()
+//    - 参考: internal/server/message_router.go:574-603
+//    - 功能: 滑动窗口频率限制，默认60条/分钟
+//
+// 4. 反垃圾消息 ✓
+//    - 实现位置: MessageRouter.processMessageTask()
+//    - 参考: internal/server/message_router.go:108-221
+//    - 功能: 签名验证、频率限制、禁言检查
+//
+// 5. 成员踢出与封禁 ✓
+//    - 实现位置: ChannelManager.KickMember(), BanMember()
+//    - 参考: internal/server/channel_manager.go:404-512
+//    - 功能: 踢出、封禁、解封、检查封禁状态
+//
+// 6. 权限分级（管理员/普通成员）✓
+//    - 实现位置: AuthManager.CheckPermission()
+//    - 参考: internal/server/auth_manager.go:351-365
+//    - 角色: Owner > Admin > Moderator > Member > ReadOnly

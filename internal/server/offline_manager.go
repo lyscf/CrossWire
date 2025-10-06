@@ -149,8 +149,8 @@ func (om *OfflineManager) DeliverOfflineMessages(memberID string) error {
 	om.stats.CurrentQueuedCount = om.calculateTotalQueued()
 	om.stats.mutex.Unlock()
 
-	// 发布离线消息投递完成事件
-	om.server.eventBus.Publish(events.EventSystemMessage, &events.SystemEvent{
+	// 发布离线消息投递完成事件（使用系统连接事件作为通用系统消息）
+	om.server.eventBus.Publish(events.EventSystemConnected, &events.SystemEvent{
 		Type:    "offline_messages_delivered",
 		Message: fmt.Sprintf("Delivered %d/%d offline messages", successCount, len(queue)),
 		Data: map[string]interface{}{

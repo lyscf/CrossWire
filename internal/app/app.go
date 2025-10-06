@@ -2,9 +2,14 @@ package app
 
 import (
 	"context"
-	"fmt"
+	"sync"
+	"time"
 
+	"crosswire/internal/client"
+	"crosswire/internal/events"
+	"crosswire/internal/server"
 	"crosswire/internal/storage"
+	"crosswire/internal/utils"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -14,125 +19,154 @@ type App struct {
 	ctx context.Context
 	db  *storage.Database
 
-	// TODO: 添加以下字段
-	// mode      Mode                     // 运行模式（服务端/客户端）
-	// server    *server.Server           // 服务端实例
-	// client    *client.Client           // 客户端实例
-	// transport transport.Transport      // 传输层
-	// crypto    *crypto.Manager          // 加密管理器
-	// eventBus  *events.EventBus         // 事件总线
-	// logger    *logger.Logger           // 日志器
+	// 核心组件
+	mode     Mode             // 运行模式（服务端/客户端）
+	server   *server.Server   // 服务端实例
+	client   *client.Client   // 客户端实例
+	eventBus *events.EventBus // 事件总线
+	logger   *utils.Logger    // 日志器
+
+	// 状态管理
+	mu        sync.RWMutex // 读写锁
+	isRunning bool         // 是否运行中
+
+	// 用户配置
+	userProfile *UserProfile // 用户配置
 }
 
 // NewApp 创建应用实例
 func NewApp(db *storage.Database) *App {
+	// 初始化事件总线（使用默认配置）
+	eventBus := events.NewEventBus(nil)
+
+	// 初始化日志器（Info级别，日志目录为./logs）
+	logger, err := utils.NewLogger(utils.LogLevelInfo, "./logs")
+	if err != nil {
+		// 如果日志初始化失败，使用标准输出
+		logger = &utils.Logger{}
+	}
+
+	// 加载用户配置
+	userProfile := loadUserProfile(db)
+
 	return &App{
-		db: db,
+		db:          db,
+		mode:        ModeIdle,
+		eventBus:    eventBus,
+		logger:      logger,
+		userProfile: userProfile,
+		isRunning:   false,
+	}
+}
+
+// loadUserProfile 加载用户配置
+func loadUserProfile(db *storage.Database) *UserProfile {
+	// TODO: 从数据库加载用户配置
+	// 暂时返回默认配置
+	return &UserProfile{
+		Nickname: "User",
+		Avatar:   "",
+		Status:   "online",
+		Theme:    "light",
+		Language: "zh-CN",
+		Notifications: NotificationSettings{
+			Enabled:     true,
+			Sound:       true,
+			Desktop:     true,
+			MentionOnly: false,
+		},
 	}
 }
 
 // Startup 应用启动时调用
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
-	fmt.Println("CrossWire starting up...")
+	a.logger.Info("CrossWire starting up...")
 
-	// TODO: 初始化各个模块
-	// 1. 加载用户配置
-	// 2. 初始化加密模块
-	// 3. 初始化事件总线
-	// 4. 初始化日志系统
-	// 5. 检查更新
+	// 订阅事件总线，将后端事件转发到前端
+	a.subscribeEvents()
+
+	a.logger.Info("CrossWire startup completed")
 }
 
 // DomReady DOM 准备完成时调用
 func (a *App) DomReady(ctx context.Context) {
-	fmt.Println("DOM is ready")
+	a.logger.Info("DOM is ready")
 
 	// 发送初始化数据到前端
 	runtime.EventsEmit(ctx, "app:ready", map[string]interface{}{
-		"version": "1.0.0",
+		"version": a.GetAppVersion(),
 		"status":  "initialized",
+		"mode":    string(a.mode),
+		"profile": a.userProfile,
 	})
 }
 
 // Shutdown 应用关闭时调用
 func (a *App) Shutdown(ctx context.Context) {
-	fmt.Println("CrossWire shutting down...")
+	a.logger.Info("CrossWire shutting down...")
 
-	// TODO: 清理资源
-	// 1. 保存用户配置
-	// 2. 关闭服务端/客户端
-	// 3. 关闭传输层
-	// 4. 关闭数据库连接
-	// 5. 清理临时文件
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// 停止当前模式
+	if a.mode == ModeServer && a.server != nil {
+		if err := a.server.Stop(); err != nil {
+			a.logger.Error("Failed to stop server: %v", err)
+		}
+		a.server = nil
+	}
+
+	if a.mode == ModeClient && a.client != nil {
+		if err := a.client.Stop(); err != nil {
+			a.logger.Error("Failed to stop client: %v", err)
+		}
+		a.client = nil
+	}
+
+	// 保存用户配置
+	// TODO: 将用户配置保存到数据库
+
+	a.mode = ModeIdle
+	a.isRunning = false
+
+	a.logger.Info("CrossWire shutdown completed")
 }
 
-// Greet 示例方法
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, welcome to CrossWire!", name)
-}
+// ==================== 基础方法 ====================
 
 // GetAppVersion 获取应用版本
 func (a *App) GetAppVersion() string {
 	return "1.0.0"
 }
 
-// TODO: 实现以下导出方法（供前端调用）
-//
-// 模式切换
-// - StartServerMode(config ServerConfig) error
-// - StartClientMode(config ClientConfig) error
-// - GetCurrentMode() Mode
-// - StopCurrentMode() error
-//
-// 频道管理
-// - CreateChannel(name, password string, config ChannelConfig) (*Channel, error)
-// - JoinChannel(serverAddress, password string) error
-// - LeaveChannel() error
-// - GetChannelInfo() (*Channel, error)
-//
-// 消息操作
-// - SendMessage(content string, msgType MessageType) error
-// - SendCodeMessage(code, language string) error
-// - GetMessages(limit, offset int) ([]*Message, error)
-// - SearchMessages(query string) ([]*Message, error)
-// - DeleteMessage(messageID string) error
-// - PinMessage(messageID string) error
-// - ReactToMessage(messageID, emoji string) error
-//
-// 文件操作
-// - UploadFile(filePath string) error
-// - DownloadFile(fileID, savePath string) error
-// - GetFiles(limit, offset int) ([]*File, error)
-//
-// 成员管理
-// - GetMembers() ([]*Member, error)
-// - UpdateMyStatus(status UserStatus) error
-// - UpdateMyProfile(profile UserProfile) error
-// - KickMember(memberID, reason string) error
-// - MuteMember(memberID string, duration int64) error
-// - UnmuteMember(memberID string) error
-//
-// 题目管理
-// - CreateChallenge(challenge Challenge) (*Challenge, error)
-// - GetChallenges() ([]*Challenge, error)
-// - GetChallenge(challengeID string) (*Challenge, error)
-// - UpdateChallenge(challengeID string, updates ChallengeUpdate) error
-// - DeleteChallenge(challengeID string) error
-// - AssignChallenge(challengeID string, memberIDs []string) error
-// - SubmitFlag(challengeID, flag string) (*SubmissionResult, error)
-// - UpdateProgress(challengeID string, progress int, summary string) error
-// - AddHint(challengeID, content string, cost int) error
-// - UnlockHint(hintID string) error
-//
-// 用户配置
-// - GetUserProfile() (*UserProfile, error)
-// - UpdateUserProfile(profile UserProfile) error
-// - GetRecentChannels() ([]*RecentChannel, error)
-//
-// 系统功能
-// - SelectNetworkInterface() ([]NetworkInterface, error)
-// - TestConnection(serverAddress string, mode TransportMode) error
-// - GetNetworkStats() (*NetworkStats, error)
-// - ExportData(exportPath string) error
-// - ImportData(importPath string) error
+// GetCurrentMode 获取当前运行模式
+func (a *App) GetCurrentMode() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return string(a.mode)
+}
+
+// IsRunning 检查是否正在运行
+func (a *App) IsRunning() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.isRunning
+}
+
+// ==================== 事件处理 ====================
+
+// emitEvent 向前端发送事件
+func (a *App) emitEvent(eventType string, data interface{}) {
+	if a.ctx == nil {
+		return
+	}
+
+	event := AppEvent{
+		Type:      eventType,
+		Timestamp: time.Now(),
+        Data:      data,
+	}
+
+	runtime.EventsEmit(a.ctx, "app:event", event)
+}

@@ -23,6 +23,7 @@ type Challenge struct {
 	Status      string      `gorm:"type:text;not null;default:'open';index:idx_challenges_status" json:"status"`
 	SolvedBy    StringArray `gorm:"type:text" json:"solved_by,omitempty"`
 	SolvedAt    *time.Time  `gorm:"type:integer" json:"solved_at,omitempty"`
+	AssignedTo  StringArray `gorm:"type:text" json:"assigned_to,omitempty"` // APP层使用：已分配给的成员ID列表
 	CreatedBy   string      `gorm:"type:text;not null" json:"created_by"`
 	CreatedAt   time.Time   `gorm:"type:integer;not null;index:idx_challenges_created_at" json:"created_at"`
 	UpdatedAt   time.Time   `gorm:"type:integer;not null" json:"updated_at"`
@@ -57,6 +58,19 @@ func (c *Challenge) BeforeCreate(tx *gorm.DB) error {
 // BeforeUpdate GORM 钩子
 func (c *Challenge) BeforeUpdate(tx *gorm.DB) error {
 	c.UpdatedAt = time.Now()
+	return nil
+}
+
+// AfterFind GORM 钩子 - 同步AssignedTo字段
+func (c *Challenge) AfterFind(tx *gorm.DB) error {
+	// 从Assignments构建AssignedTo列表
+	if len(c.Assignments) > 0 && len(c.AssignedTo) == 0 {
+		assignedTo := make([]string, 0, len(c.Assignments))
+		for _, assignment := range c.Assignments {
+			assignedTo = append(assignedTo, assignment.MemberID)
+		}
+		c.AssignedTo = assignedTo
+	}
 	return nil
 }
 
