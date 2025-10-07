@@ -24,6 +24,16 @@ func (a *App) GetNetworkInterfaces() Response {
 
 	result := make([]*NetworkInterface, 0)
 	for _, iface := range interfaces {
+		// 跳过回环接口
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		// 只处理启用的接口
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
 		// 获取IP地址
 		addrs, err := iface.Addrs()
 		if err != nil {
@@ -33,15 +43,19 @@ func (a *App) GetNetworkInterfaces() Response {
 		ipAddresses := make([]string, 0)
 		for _, addr := range addrs {
 			if ipNet, ok := addr.(*net.IPNet); ok {
-				ipAddresses = append(ipAddresses, ipNet.IP.String())
+				// 只返回IPv4地址
+				if ipv4 := ipNet.IP.To4(); ipv4 != nil {
+					ipAddresses = append(ipAddresses, ipv4.String())
+				}
 			}
 		}
 
-		// 只返回有IP地址的接口
+		// 只返回有IPv4地址的接口
 		if len(ipAddresses) > 0 {
+			a.logger.Debug("Found network interface: %s, IPs: %v", iface.Name, ipAddresses)
 			result = append(result, &NetworkInterface{
-				Name:        iface.Name,
-				DisplayName: iface.Name, // TODO: 在Windows上可以获取更友好的名称
+				Name:        iface.Name, // 系统内部名称（用于后端）
+				DisplayName: iface.Name, // 显示名称（用于前端）
 				MACAddress:  iface.HardwareAddr.String(),
 				IPAddresses: ipAddresses,
 				IsUp:        iface.Flags&net.FlagUp != 0,
@@ -49,6 +63,8 @@ func (a *App) GetNetworkInterfaces() Response {
 			})
 		}
 	}
+
+	a.logger.Info("Found %d available network interfaces", len(result))
 
 	return NewSuccessResponse(result)
 }

@@ -73,6 +73,8 @@ export function GetRecentChannels():Promise<app.Response>;
 
 export function GetServerStatus():Promise<app.Response>;
 
+export function GetSubChannels():Promise<app.Response>;
+
 export function GetUserProfile():Promise<app.Response>;
 
 export function ImportData(arg1:string):Promise<app.Response>;

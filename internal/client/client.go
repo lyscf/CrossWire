@@ -828,6 +828,15 @@ func (c *Client) GetChallenge(challengeID string) (*models.Challenge, bool) {
 	return c.challengeManager.GetChallenge(challengeID)
 }
 
+// GetSubChannels 获取所有题目子频道
+func (c *Client) GetSubChannels() ([]*models.Channel, error) {
+	c.mutex.RLock()
+	channelID := c.config.ChannelID
+	c.mutex.RUnlock()
+
+	return c.channelRepo.GetSubChannels(channelID)
+}
+
 // SubmitFlag 提交Flag
 func (c *Client) SubmitFlag(challengeID string, flag string) error {
 	return c.challengeManager.SubmitFlag(challengeID, flag)

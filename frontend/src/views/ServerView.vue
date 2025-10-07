@@ -31,11 +31,14 @@
           <a-form-item
             label="频道密码"
             name="password"
-            :rules="[{ required: true, message: '请输入频道密码' }]"
+            :rules="[
+              { required: true, message: '请输入频道密码' },
+              { min: 6, message: '密码长度至少为6个字符' }
+            ]"
           >
             <a-input-password
               v-model:value="serverConfig.password"
-              placeholder="设置加入密码"
+              placeholder="至少6个字符"
               :prefix="h(LockOutlined)"
             >
               <template #suffix>
@@ -76,11 +79,12 @@
             />
           </a-form-item>
 
-          <!-- 网络接口 (ARP) -->
+          <!-- 网络接口 (ARP/mDNS) -->
           <a-form-item
-            v-if="serverConfig.transportMode === 'arp'"
+            v-if="serverConfig.transportMode === 'arp' || serverConfig.transportMode === 'mdns'"
             label="网络接口"
             name="interface"
+            :rules="[{ required: true, message: '请选择网络接口' }]"
           >
             <a-select
               v-model:value="serverConfig.interface"
@@ -95,6 +99,15 @@
                 {{ iface.name }} - {{ iface.ip }}
               </a-select-option>
             </a-select>
+            <template v-if="interfaces.length === 0 && !loadingInterfaces">
+              <a-alert
+                message="未找到可用网络接口"
+                description="请确保网络适配器已启用并配置IP地址，或切换到HTTPS模式"
+                type="warning"
+                show-icon
+                style="margin-top: 8px"
+              />
+            </template>
           </a-form-item>
 
           <!-- 最大成员数 -->
@@ -230,21 +243,31 @@ const generatePassword = () => {
   message.success('已生成随机密码')
 }
 
+import { getNetworkInterfaces, startServer } from '@/api/app'
+
 const loadNetworkInterfaces = async () => {
   loadingInterfaces.value = true
   try {
-    // TODO: 调用 Wails API 获取网络接口列表
-    // const ifaces = await GetNetworkInterfaces()
-    // 模拟数据
-    interfaces.value = [
-      { name: 'eth0', ip: '192.168.1.100' },
-      { name: 'wlan0', ip: '192.168.1.101' }
-    ]
+    const list = await getNetworkInterfaces()
+    console.log('获取到的网络接口列表:', list)
+    
+    interfaces.value = (list || []).map(item => ({
+      name: item.name || item.display_name || item.Name || 'unknown',
+      ip: (item.ip_addresses && item.ip_addresses[0]) || (item.IPAddresses && item.IPAddresses[0]) || ''
+    }))
+    
+    console.log('处理后的网络接口:', interfaces.value)
+    
     if (interfaces.value.length > 0) {
       serverConfig.interface = interfaces.value[0].name
+      console.log('默认选择网络接口:', serverConfig.interface)
+    } else {
+      console.warn('没有可用的网络接口')
+      message.warning('未找到可用网络接口，建议使用HTTPS模式')
     }
   } catch (error) {
-    message.error('获取网络接口失败')
+    console.error('获取网络接口失败:', error)
+    message.error('获取网络接口失败: ' + (error.message || '未知错误'))
   } finally {
     loadingInterfaces.value = false
   }
@@ -253,17 +276,28 @@ const loadNetworkInterfaces = async () => {
 const handleStartServer = async () => {
   loading.value = true
   try {
-    // TODO: 调用 Wails API 启动服务端
-    // await StartServerMode(serverConfig)
-    console.log('Starting server with config:', serverConfig)
+    const config = {
+      channel_name: serverConfig.channelName,
+      password: serverConfig.password,
+      transport_mode: serverConfig.transportMode,
+      network_interface: serverConfig.interface,
+      port: serverConfig.port,
+      max_members: serverConfig.maxMembers,
+      enable_challenge: true,
+      description: ''
+    }
     
-    // 模拟启动
-    await new Promise(resolve => setTimeout(resolve, 1500))
+    console.log('准备启动服务端，配置:', config)
     
+    await startServer(config)
+    
+    console.log('服务端启动成功')
     message.success('服务端启动成功！')
     router.push('/chat')
   } catch (error) {
-    message.error('启动服务端失败: ' + error.message)
+    console.error('启动服务端失败:', error)
+    const errorMsg = error.message || error.details || '未知错误'
+    message.error('启动服务端失败: ' + errorMsg, 5)
   } finally {
     loading.value = false
   }

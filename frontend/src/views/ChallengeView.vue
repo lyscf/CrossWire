@@ -84,13 +84,14 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import ChallengeList from '@/components/Challenge/ChallengeList.vue'
 import ChallengeDetail from '@/components/Challenge/ChallengeDetail.vue'
 import ChallengeCreate from '@/components/Challenge/ChallengeCreate.vue'
 import { useChallengeStore } from '@/stores/challenge'
+import { getChallenges, createChallenge, assignChallenge, submitFlag } from '@/api/app'
 
 const challengeStore = useChallengeStore()
 const isAdmin = ref(true) // TODO: 从用户状态获取
@@ -99,42 +100,8 @@ const filterCategory = ref('all')
 const filterStatus = ref('all')
 const selectedChallengeId = ref(null)
 
-// 模拟数据
-const challenges = ref([
-  {
-    id: '1',
-    title: 'SQL注入登录绕过',
-    category: 'Web',
-    difficulty: 'Easy',
-    points: 100,
-    status: 'in_progress',
-    assignedTo: ['alice', 'bob'],
-    progress: 60,
-    solvedBy: null
-  },
-  {
-    id: '2',
-    title: '栈溢出提权',
-    category: 'Pwn',
-    difficulty: 'Medium',
-    points: 200,
-    status: 'in_progress',
-    assignedTo: ['charlie'],
-    progress: 30,
-    solvedBy: null
-  },
-  {
-    id: '3',
-    title: 'RSA 加密破解',
-    category: 'Crypto',
-    difficulty: 'Hard',
-    points: 300,
-    status: 'pending',
-    assignedTo: [],
-    progress: 0,
-    solvedBy: null
-  }
-])
+// 真实数据（从后端加载）
+const challenges = ref([])
 
 const filteredChallenges = computed(() => {
   return challenges.value.filter(c => {
@@ -156,22 +123,100 @@ const handleSelectChallenge = (id) => {
   selectedChallengeId.value = id
 }
 
-const handleChallengeCreated = (challenge) => {
-  challenges.value.push(challenge)
-  message.success('题目创建成功')
+const handleChallengeCreated = async (challenge) => {
+  try {
+    console.log('Creating challenge:', challenge)
+    await createChallenge(challenge)
+    message.success('题目创建成功')
+    // 重新加载题目列表
+    await loadChallenges()
+    showCreateModal.value = false
+  } catch (e) {
+    console.error('Failed to create challenge:', e)
+    message.error('题目创建失败: ' + (e.message || '未知错误'))
+  }
 }
 
-const handleAssign = (members) => {
-  message.success(`已分配给 ${members.join(', ')}`)
+const handleAssign = async (members) => {
+  if (!selectedChallengeId.value) return
+  try {
+    console.log('Assigning challenge to:', members)
+    // 如果members是数组，循环分配给每个成员
+    if (Array.isArray(members)) {
+      for (const memberId of members) {
+        await assignChallenge(selectedChallengeId.value, memberId)
+      }
+      message.success(`已分配给 ${members.length} 位成员`)
+    } else {
+      // 单个成员
+      await assignChallenge(selectedChallengeId.value, members)
+      message.success('分配成功')
+    }
+    await loadChallenges()
+  } catch (e) {
+    console.error('Failed to assign challenge:', e)
+    message.error('分配失败: ' + (e.message || '未知错误'))
+  }
 }
 
-const handleSubmit = (flag) => {
-  message.info(`提交 Flag: ${flag}`)
+const handleSubmit = async (flag) => {
+  if (!selectedChallengeId.value) return
+  try {
+    console.log('Submitting flag:', flag)
+    const result = await submitFlag(selectedChallengeId.value, flag)
+    if (result.correct) {
+      message.success('Flag 正确！恭喜你！')
+    } else {
+      message.error('Flag 错误，请重试')
+    }
+    await loadChallenges()
+  } catch (e) {
+    console.error('Failed to submit flag:', e)
+    message.error('提交失败: ' + (e.message || '未知错误'))
+  }
 }
 
 const handleUpdateProgress = (progress) => {
   message.info(`进度更新: ${progress}%`)
 }
+
+// 加载题目列表
+const loadChallenges = async () => {
+  try {
+    console.log('Loading challenges from backend...')
+    const list = await getChallenges()
+    console.log('Loaded challenges:', list)
+    
+    if (Array.isArray(list)) {
+      challenges.value = list.map(c => ({
+        id: c.id || c.ID,
+        title: c.title || c.Title || '未命名题目',
+        category: c.category || c.Category || 'Misc',
+        difficulty: c.difficulty || c.Difficulty || 'Medium',
+        points: c.points || c.Points || 100,
+        status: c.status || c.Status || 'pending',
+        assignedTo: c.assigned_to || c.AssignedTo || [],
+        progress: c.progress || c.Progress || 0,
+        solvedBy: c.solved_by || c.SolvedBy || null,
+        description: c.description || c.Description || '',
+        flag: c.flag || c.Flag || ''
+      }))
+    }
+    
+    if (challenges.value.length === 0) {
+      console.log('No challenges found')
+    }
+  } catch (e) {
+    console.error('Failed to load challenges:', e)
+    message.warning('题目加载失败，请检查服务器状态')
+  }
+}
+
+// 组件挂载时加载数据
+onMounted(async () => {
+  console.log('ChallengeView mounted')
+  await loadChallenges()
+})
 </script>
 
 <style scoped>

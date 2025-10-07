@@ -317,7 +317,7 @@ func (a *App) messageToDTO(msg *models.Message) *MessageDTO {
 		SenderName: senderName,
 		Type:       msg.Type,
 		Content:    msg.Content,
-		Timestamp:  msg.Timestamp,
+		Timestamp:  msg.Timestamp.Unix(),
 		IsEdited:   msg.IsEdited,
 		IsDeleted:  msg.IsDeleted,
 		IsPinned:   msg.IsPinned,

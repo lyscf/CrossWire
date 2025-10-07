@@ -319,8 +319,8 @@ func (a *App) memberToDTO(member *models.Member) *MemberDTO {
 		Role:       member.Role,
 		Status:     member.Status,
 		IsOnline:   member.IsOnline,
-		JoinTime:   member.JoinTime,
-		LastSeenAt: member.LastSeenAt,
+		JoinTime:   member.JoinTime.Unix(),
+		LastSeenAt: member.LastSeenAt.Unix(),
 		IsMuted:    member.IsMuted,
 		IsBanned:   member.IsBanned,
 	}

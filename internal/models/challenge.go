@@ -8,26 +8,27 @@ import (
 
 // Challenge CTF 题目
 type Challenge struct {
-	ID          string      `gorm:"primaryKey;type:text" json:"id"`
-	ChannelID   string      `gorm:"type:text;not null;index:idx_challenges_channel" json:"channel_id"`
-	Title       string      `gorm:"type:text;not null" json:"title"`
-	Category    string      `gorm:"type:text;not null;index:idx_challenges_category" json:"category"`
-	Difficulty  string      `gorm:"type:text;not null" json:"difficulty"`
-	Points      int         `gorm:"type:integer;not null" json:"points"`
-	Description string      `gorm:"type:text;not null" json:"description"`
-	FlagFormat  string      `gorm:"type:text" json:"flag_format,omitempty"`
-	FlagHash    string      `gorm:"type:text" json:"-"` // 不返回给前端
-	URL         string      `gorm:"type:text" json:"url,omitempty"`
-	Attachments StringArray `gorm:"type:text" json:"attachments,omitempty"`
-	Tags        StringArray `gorm:"type:text" json:"tags,omitempty"`
-	Status      string      `gorm:"type:text;not null;default:'open';index:idx_challenges_status" json:"status"`
-	SolvedBy    StringArray `gorm:"type:text" json:"solved_by,omitempty"`
-	SolvedAt    *time.Time  `gorm:"type:integer" json:"solved_at,omitempty"`
-	AssignedTo  StringArray `gorm:"type:text" json:"assigned_to,omitempty"` // APP层使用：已分配给的成员ID列表
-	CreatedBy   string      `gorm:"type:text;not null" json:"created_by"`
-	CreatedAt   time.Time   `gorm:"type:integer;not null;index:idx_challenges_created_at" json:"created_at"`
-	UpdatedAt   time.Time   `gorm:"type:integer;not null" json:"updated_at"`
-	Metadata    JSONField   `gorm:"type:text" json:"metadata,omitempty"`
+	ID           string      `gorm:"primaryKey;type:text" json:"id"`
+	ChannelID    string      `gorm:"type:text;not null;index:idx_challenges_channel" json:"channel_id"`
+	SubChannelID string      `gorm:"type:text" json:"sub_channel_id,omitempty"` // 题目专属子频道ID
+	Title        string      `gorm:"type:text;not null" json:"title"`
+	Category     string      `gorm:"type:text;not null;index:idx_challenges_category" json:"category"`
+	Difficulty   string      `gorm:"type:text;not null" json:"difficulty"`
+	Points       int         `gorm:"type:integer;not null" json:"points"`
+	Description  string      `gorm:"type:text;not null" json:"description"`
+	FlagFormat   string      `gorm:"type:text" json:"flag_format,omitempty"`
+	FlagHash     string      `gorm:"type:text" json:"-"` // 不返回给前端
+	URL          string      `gorm:"type:text" json:"url,omitempty"`
+	Attachments  StringArray `gorm:"type:text" json:"attachments,omitempty"`
+	Tags         StringArray `gorm:"type:text" json:"tags,omitempty"`
+	Status       string      `gorm:"type:text;not null;default:'open';index:idx_challenges_status" json:"status"`
+	SolvedBy     StringArray `gorm:"type:text" json:"solved_by,omitempty"`
+	SolvedAt     *time.Time  `gorm:"type:integer" json:"solved_at,omitempty"`
+	AssignedTo   StringArray `gorm:"type:text" json:"assigned_to,omitempty"` // APP层使用：已分配给的成员ID列表
+	CreatedBy    string      `gorm:"type:text;not null" json:"created_by"`
+	CreatedAt    time.Time   `gorm:"type:integer;not null;index:idx_challenges_created_at" json:"created_at"`
+	UpdatedAt    time.Time   `gorm:"type:integer;not null" json:"updated_at"`
+	Metadata     JSONField   `gorm:"type:text" json:"metadata,omitempty"`
 
 	// 关联
 	Channel     *Channel               `gorm:"foreignKey:ChannelID;constraint:OnDelete:CASCADE" json:"-"`

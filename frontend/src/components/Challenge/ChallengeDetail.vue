@@ -179,33 +179,9 @@ const showProgressModal = ref(false)
 const showRoomDrawer = ref(false)
 const localProgress = ref(props.challenge.progress || 0)
 
-// 模拟进度数据
-const progressData = ref([
-  {
-    memberId: 'user1',
-    memberName: 'alice',
-    progress: 80,
-    summary: '已找到注入点，正在绕过 WAF',
-    updatedAt: new Date(Date.now() - 300000)
-  },
-  {
-    memberId: 'user2',
-    memberName: 'bob',
-    progress: 100,
-    summary: '已获取 Flag',
-    updatedAt: new Date(Date.now() - 600000)
-  }
-])
-
-// 模拟提交历史
-const submissions = ref([
-  {
-    id: '1',
-    submitter: 'alice',
-    correct: false,
-    timestamp: '2025-10-05 10:30'
-  }
-])
+// 真实数据（从后端加载）
+const progressData = ref([])
+const submissions = ref([])
 
 const getCategoryColor = (category) => {
   const colors = {

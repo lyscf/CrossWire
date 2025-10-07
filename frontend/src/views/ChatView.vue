@@ -50,19 +50,14 @@
 
           <a-menu-divider />
 
-          <a-menu-item-group v-if="!collapsed" title="题目频道">
-            <a-menu-item key="web-100">
+          <!-- 题目频道列表 -->
+          <a-menu-item-group v-if="!collapsed && subChannels.length > 0" title="题目频道">
+            <a-menu-item v-for="channel in subChannels" :key="channel.id">
               <template #icon>
                 <CodeOutlined />
               </template>
-              <span>Web-100</span>
-              <a-badge :count="3" :offset="[10, 0]" />
-            </a-menu-item>
-            <a-menu-item key="pwn-200">
-              <template #icon>
-                <BugOutlined />
-              </template>
-              <span>Pwn-200</span>
+              <span>{{ channel.name }}</span>
+              <a-badge v-if="channel.message_count > 0" :count="channel.message_count" :offset="[10, 0]" />
             </a-menu-item>
           </a-menu-item-group>
         </a-menu>
@@ -249,69 +244,15 @@ const currentUser = ref({
   role: 'admin'
 })
 
-// 模拟数据
-const pinnedMessages = ref([
-  {
-    id: '1',
-    content: '比赛规则：禁止攻击基础设施，发现漏洞请及时提交'
-  }
-])
+// 真实数据（从后端加载）
+const pinnedMessages = ref([])
+const messages = ref([])
+const members = ref([])
+const subChannels = ref([])
 
-const messages = ref([
-  {
-    id: '1',
-    type: 'system',
-    content: 'alice 加入了频道',
-    timestamp: new Date(Date.now() - 3600000)
-  },
-  {
-    id: '2',
-    senderId: 'user1',
-    senderName: 'alice',
-    senderAvatar: '',
-    content: '大家好！我擅长 Web 方向',
-    timestamp: new Date(Date.now() - 3000000),
-    type: 'text'
-  },
-  {
-    id: '3',
-    senderId: 'user2',
-    senderName: 'bob',
-    senderAvatar: '',
-    content: '我来做 Pwn 题',
-    timestamp: new Date(Date.now() - 2000000),
-    type: 'text'
-  }
-])
+import { sendMessage, getMessages, getSubChannels, getMembers } from '@/api/app'
 
-const members = ref([
-  {
-    id: 'user1',
-    nickname: 'alice',
-    role: '队长',
-    status: 'online',
-    skills: ['Web', 'Crypto'],
-    currentTask: 'Web-100'
-  },
-  {
-    id: 'user2',
-    nickname: 'bob',
-    role: '队员',
-    status: 'busy',
-    skills: ['Pwn', 'Reverse'],
-    currentTask: 'Pwn-200'
-  },
-  {
-    id: 'user3',
-    nickname: 'charlie',
-    role: '队员',
-    status: 'online',
-    skills: ['Misc'],
-    currentTask: null
-  }
-])
-
-const handleSendMessage = (messageData) => {
+const handleSendMessage = async (messageData) => {
   // messageData 可能是字符串（旧版）或对象（包含 content 和 mentions）
   const content = typeof messageData === 'string' ? messageData : messageData.content
   const mentions = typeof messageData === 'object' ? messageData.mentions : []
@@ -329,8 +270,12 @@ const handleSendMessage = (messageData) => {
   
   messages.value.push(newMessage)
   
-  // TODO: 调用 Wails API 发送消息
-  // await SendMessage(content, mentions)
+  try {
+    await sendMessage(content, 'text')
+  } catch (e) {
+    // 发送失败提示
+    message.error('发送失败: ' + (e.message || ''))
+  }
 }
 
 const handleProfileUpdate = (updatedProfile) => {
@@ -361,9 +306,74 @@ const handleDisconnect = () => {
   })
 }
 
-onMounted(() => {
-  // TODO: 初始化消息监听
-  // InitializeMessageListener()
+onMounted(async () => {
+  console.log('ChatView mounted, loading data from backend...')
+  
+  // 加载消息
+  try {
+    const list = await getMessages(50, 0)
+    console.log('Loaded messages:', list)
+    if (Array.isArray(list)) {
+      // 简单映射到本地结构
+      list.forEach(m => messages.value.push({
+        id: m.id || m.ID,
+        senderId: m.sender_id || m.SenderID,
+        senderName: m.sender_name || m.SenderName || 'user',
+        content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+        timestamp: new Date(m.timestamp || m.Timestamp || Date.now()),
+        type: (m.type || m.Type || 'text')
+      }))
+    }
+    
+    if (messages.value.length === 0) {
+      console.log('No messages found, showing welcome message')
+      // 如果没有消息，显示欢迎消息
+      messages.value.push({
+        id: 'welcome',
+        type: 'system',
+        content: '欢迎来到 ' + channelName.value + ' 频道！',
+        timestamp: new Date()
+      })
+    }
+  } catch (e) {
+    console.error('Failed to load messages:', e)
+    message.warning('消息加载失败，显示本地消息')
+  }
+  
+  // 加载成员列表
+  try {
+    const memberList = await getMembers()
+    console.log('Loaded members:', memberList)
+    if (Array.isArray(memberList)) {
+      members.value = memberList.map(m => ({
+        id: m.id || m.ID,
+        nickname: m.nickname || m.Nickname || 'Unknown',
+        role: m.role || m.Role || '队员',
+        status: m.status || m.Status || 'offline',
+        skills: m.skills || m.Skills || [],
+        currentTask: m.current_task || m.CurrentTask || null
+      }))
+    }
+  } catch (e) {
+    console.error('Failed to load members:', e)
+    // 成员加载失败不影响使用
+  }
+
+  // 加载子频道列表（题目频道）
+  try {
+    const channelList = await getSubChannels()
+    console.log('Loaded sub-channels:', channelList)
+    if (Array.isArray(channelList)) {
+      subChannels.value = channelList.map(ch => ({
+        id: ch.id || ch.ID,
+        name: ch.name || ch.Name,
+        message_count: ch.message_count || ch.MessageCount || 0
+      }))
+    }
+  } catch (e) {
+    console.error('Failed to load sub-channels:', e)
+    // 子频道加载失败不影响使用（可能是客户端模式）
+  }
 })
 </script>
 

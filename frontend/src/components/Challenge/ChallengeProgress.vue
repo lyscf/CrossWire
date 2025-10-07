@@ -146,29 +146,7 @@ dayjs.locale('zh-cn')
 const props = defineProps({
   progressData: {
     type: Array,
-    default: () => [
-      {
-        memberId: 'user1',
-        memberName: 'alice',
-        progress: 80,
-        summary: '已找到注入点，正在绕过 WAF',
-        updatedAt: new Date(Date.now() - 300000)
-      },
-      {
-        memberId: 'user2',
-        memberName: 'bob',
-        progress: 100,
-        summary: '已获取 Flag',
-        updatedAt: new Date(Date.now() - 600000)
-      },
-      {
-        memberId: 'user3',
-        memberName: 'charlie',
-        progress: 30,
-        summary: '正在分析源码',
-        updatedAt: new Date(Date.now() - 900000)
-      }
-    ]
+    default: () => []
   }
 })
 
@@ -189,33 +167,8 @@ const averageProgress = computed(() => {
   return overallProgress.value
 })
 
-// 模拟时间线事件
-const timelineEvents = computed(() => [
-  {
-    id: '1',
-    type: 'update',
-    memberName: 'alice',
-    action: '更新进度',
-    detail: '进度更新到 80%',
-    timestamp: new Date(Date.now() - 300000)
-  },
-  {
-    id: '2',
-    type: 'complete',
-    memberName: 'bob',
-    action: '完成题目',
-    detail: '成功获取 Flag',
-    timestamp: new Date(Date.now() - 600000)
-  },
-  {
-    id: '3',
-    type: 'update',
-    memberName: 'charlie',
-    action: '开始解题',
-    detail: '开始分析题目',
-    timestamp: new Date(Date.now() - 900000)
-  }
-])
+// 时间线事件（从后端加载）
+const timelineEvents = computed(() => [])
 
 const formatTime = (timestamp) => {
   return dayjs(timestamp).fromNow()

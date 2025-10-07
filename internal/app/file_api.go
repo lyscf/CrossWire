@@ -330,7 +330,7 @@ func (a *App) fileToDTO(file *models.File) *FileDTO {
 		UploaderName: uploaderName,
 		UploadStatus: file.UploadStatus,
 		Progress:     int(float64(file.UploadedChunks) / float64(max(1, file.TotalChunks)) * 100),
-		UploadTime:   file.UploadedAt,
+		UploadTime:   file.UploadedAt.Unix(),
 	}
 }
 

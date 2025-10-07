@@ -120,6 +120,18 @@ func (r *ChannelRepository) GetPinnedMessages(channelID string) ([]*models.Pinne
 	return pinned, nil
 }
 
+// GetSubChannels 获取子频道列表（题目频道）
+func (r *ChannelRepository) GetSubChannels(parentChannelID string) ([]*models.Channel, error) {
+	var channels []*models.Channel
+	err := r.db.GetChannelDB().Where("parent_channel_id = ?", parentChannelID).
+		Order("created_at DESC").
+		Find(&channels).Error
+	if err != nil {
+		return nil, err
+	}
+	return channels, nil
+}
+
 // TODO: 实现以下方法
 // - UpdateMetadata() 更新频道元数据
 // - GetChannelConfig() 获取频道配置

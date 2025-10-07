@@ -148,11 +148,14 @@
           <a-form-item
             label="频道密码"
             name="password"
-            :rules="[{ required: true, message: '请输入频道密码' }]"
+            :rules="[
+              { required: true, message: '请输入频道密码' },
+              { min: 6, message: '密码长度至少为6个字符' }
+            ]"
           >
             <a-input-password
               v-model:value="userInfo.password"
-              placeholder="输入频道密码"
+              placeholder="至少6个字符"
             />
           </a-form-item>
 
@@ -257,35 +260,22 @@ const goBack = () => {
   router.push('/')
 }
 
+import { discoverServers, startClient } from '@/api/app'
+
 const startScan = async () => {
   scanning.value = true
   try {
-    // TODO: 调用 Wails API 扫描局域网
-    // const servers = await ScanLocalNetwork()
-    
-    // 模拟扫描
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    discoveredServers.value = [
-      {
-        channelName: 'CTF-Team-2025',
-        ip: '192.168.1.100',
-        port: 8443,
-        transportMode: 'arp',
-        members: 5
-      },
-      {
-        channelName: 'Hacker-Space',
-        ip: '192.168.1.102',
-        port: 8443,
-        transportMode: 'https',
-        members: 3
-      }
-    ]
-    
+    const servers = await discoverServers(3)
+    discoveredServers.value = (servers || []).map(s => ({
+      channelName: s.channel_name || s.ChannelName || '未知频道',
+      ip: s.ip || s.IP || s.address || '',
+      port: s.port || 8443,
+      transportMode: (s.transport_mode || s.TransportMode || 'https').toLowerCase(),
+      members: s.members || s.MemberCount || 0
+    }))
     message.success(`发现 ${discoveredServers.value.length} 个频道`)
   } catch (error) {
-    message.error('扫描失败: ' + error.message)
+    message.error('扫描失败: ' + (error.message || ''))
   } finally {
     scanning.value = false
   }
@@ -307,17 +297,20 @@ const handleManualConnect = () => {
 const handleJoinChannel = async () => {
   joining.value = true
   try {
-    // TODO: 调用 Wails API 加入频道
-    // await JoinChannel(selectedServer.value, userInfo)
-    console.log('Joining channel:', selectedServer.value, userInfo)
-    
-    // 模拟加入
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    
+    await startClient({
+      password: userInfo.password,
+      transport_mode: manualConfig.transportMode,
+      network_interface: '',
+      server_address: selectedServer.value?.ip || manualConfig.serverAddress,
+      port: selectedServer.value?.port || manualConfig.port,
+      nickname: userInfo.nickname,
+      avatar: '',
+      auto_reconnect: true
+    })
     message.success('成功加入频道！')
     router.push('/chat')
   } catch (error) {
-    message.error('加入频道失败: ' + error.message)
+    message.error('加入频道失败: ' + (error.message || ''))
   } finally {
     joining.value = false
   }

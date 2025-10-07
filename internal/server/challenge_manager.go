@@ -25,7 +25,7 @@ func NewChallengeManager(server *Server) *ChallengeManager {
 	}
 }
 
-// CreateChallenge 创建题目
+// CreateChallenge 创建题目（并创建对应的子频道）
 func (cm *ChallengeManager) CreateChallenge(challenge *models.Challenge) error {
 	if challenge == nil {
 		return errors.New("challenge is nil")
@@ -33,6 +33,14 @@ func (cm *ChallengeManager) CreateChallenge(challenge *models.Challenge) error {
 
 	// 设置频道ID
 	challenge.ChannelID = cm.server.config.ChannelID
+
+	// 创建题目专属子频道
+	subChannel, err := cm.createSubChannel(challenge)
+	if err != nil {
+		return fmt.Errorf("failed to create sub-channel: %w", err)
+	}
+	challenge.SubChannelID = subChannel.ID
+	cm.server.logger.Info("[ChallengeManager] Created sub-channel: %s for challenge: %s", subChannel.Name, challenge.Title)
 
 	// 保存到数据库
 	if err := cm.server.challengeRepo.Create(challenge); err != nil {
@@ -49,6 +57,40 @@ func (cm *ChallengeManager) CreateChallenge(challenge *models.Challenge) error {
 	cm.broadcastChallengeCreated(challenge)
 
 	return nil
+}
+
+// createSubChannel 创建题目专属子频道
+func (cm *ChallengeManager) createSubChannel(challenge *models.Challenge) (*models.Channel, error) {
+	// 获取主频道
+	parentChannel, err := cm.server.channelRepo.GetByID(cm.server.config.ChannelID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parent channel: %w", err)
+	}
+
+	// 创建子频道（继承主频道的密码和密钥）
+	subChannel := &models.Channel{
+		ID:              fmt.Sprintf("%s-sub-%s", cm.server.config.ChannelID, challenge.ID),
+		Name:            fmt.Sprintf("%s [%s]", challenge.Title, challenge.Category),
+		ParentChannelID: cm.server.config.ChannelID,
+		PasswordHash:    parentChannel.PasswordHash,
+		Salt:            parentChannel.Salt,
+		EncryptionKey:   parentChannel.EncryptionKey,
+		KeyVersion:      parentChannel.KeyVersion,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+		CreatorID:       "server",
+		MaxMembers:      parentChannel.MaxMembers,
+		TransportMode:   parentChannel.TransportMode,
+		Port:            parentChannel.Port,
+		Interface:       parentChannel.Interface,
+	}
+
+	// 保存子频道
+	if err := cm.server.channelRepo.Create(subChannel); err != nil {
+		return nil, fmt.Errorf("failed to save sub-channel: %w", err)
+	}
+
+	return subChannel, nil
 }
 
 // AssignChallenge 分配题目
@@ -270,7 +312,7 @@ func (cm *ChallengeManager) sendSubmissionResponse(to string, correct bool, mess
 	}
 }
 
-// broadcastChallengeCreated 广播题目创建
+// broadcastChallengeCreated 广播题目创建（包含子频道信息）
 func (cm *ChallengeManager) broadcastChallengeCreated(challenge *models.Challenge) {
 	systemMsg := &models.Message{
 		ID:        generateMessageID(),
@@ -280,18 +322,19 @@ func (cm *ChallengeManager) broadcastChallengeCreated(challenge *models.Challeng
 		Timestamp: time.Now(),
 	}
 
-	// 设置系统消息内容（直接构造map）
+	// 设置系统消息内容（直接构造map），包含子频道ID
 	systemMsg.Content = models.MessageContent{
 		"event":     "challenge_created",
 		"actor_id":  "server",
 		"target_id": challenge.ID,
 		"extra": map[string]interface{}{
-			"challenge_id": challenge.ID,
-			"title":        challenge.Title,
-			"category":     challenge.Category,
-			"difficulty":   challenge.Difficulty,
-			"points":       challenge.Points,
-			"message":      fmt.Sprintf("New challenge created: %s [%s]", challenge.Title, challenge.Category),
+			"challenge_id":   challenge.ID,
+			"title":          challenge.Title,
+			"category":       challenge.Category,
+			"difficulty":     challenge.Difficulty,
+			"points":         challenge.Points,
+			"sub_channel_id": challenge.SubChannelID, // 添加子频道ID
+			"message":        fmt.Sprintf("New challenge created: %s [%s]", challenge.Title, challenge.Category),
 		},
 	}
 

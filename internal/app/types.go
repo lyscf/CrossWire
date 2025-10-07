@@ -2,7 +2,6 @@ package app
 
 import (
 	"crosswire/internal/models"
-	"time"
 )
 
 // ==================== 运行模式 ====================
@@ -39,7 +38,7 @@ type ServerStatus struct {
 	ChannelName   string        `json:"channel_name"`
 	TransportMode string        `json:"transport_mode"`
 	MemberCount   int           `json:"member_count"`
-	StartTime     time.Time     `json:"start_time"`
+	StartTime     int64         `json:"start_time"` // Unix timestamp
 	NetworkStats  *NetworkStats `json:"network_stats"`
 }
 
@@ -59,13 +58,13 @@ type ClientConfig struct {
 
 // ClientStatus 客户端状态
 type ClientStatus struct {
-	Running       bool      `json:"running"`
-	Connected     bool      `json:"connected"`
-	ChannelID     string    `json:"channel_id"`
-	ChannelName   string    `json:"channel_name"`
-	MemberID      string    `json:"member_id"`
-	TransportMode string    `json:"transport_mode"`
-	ConnectTime   time.Time `json:"connect_time"`
+	Running       bool   `json:"running"`
+	Connected     bool   `json:"connected"`
+	ChannelID     string `json:"channel_id"`
+	ChannelName   string `json:"channel_name"`
+	MemberID      string `json:"member_id"`
+	TransportMode string `json:"transport_mode"`
+	ConnectTime   int64  `json:"connect_time"` // Unix timestamp
 }
 
 // ==================== 消息相关 ====================
@@ -78,7 +77,7 @@ type MessageDTO struct {
 	SenderName string                 `json:"sender_name"`
 	Type       models.MessageType     `json:"type"`
 	Content    map[string]interface{} `json:"content"`
-	Timestamp  time.Time              `json:"timestamp"`
+	Timestamp  int64                  `json:"timestamp"` // Unix timestamp
 	IsEdited   bool                   `json:"is_edited"`
 	IsDeleted  bool                   `json:"is_deleted"`
 	IsPinned   bool                   `json:"is_pinned"`
@@ -112,8 +111,8 @@ type SearchMessagesRequest struct {
 	Query     string              `json:"query"`
 	Type      *models.MessageType `json:"type,omitempty"`
 	SenderID  *string             `json:"sender_id,omitempty"`
-	StartTime *time.Time          `json:"start_time,omitempty"`
-	EndTime   *time.Time          `json:"end_time,omitempty"`
+	StartTime *int64              `json:"start_time,omitempty"` // Unix timestamp
+	EndTime   *int64              `json:"end_time,omitempty"`   // Unix timestamp
 	Limit     int                 `json:"limit"`
 	Offset    int                 `json:"offset"`
 }
@@ -130,7 +129,7 @@ type FileDTO struct {
 	UploaderName  string              `json:"uploader_name"`
 	UploadStatus  models.UploadStatus `json:"upload_status"`
 	Progress      int                 `json:"progress"`
-	UploadTime    time.Time           `json:"upload_time"`
+	UploadTime    int64               `json:"upload_time"` // Unix timestamp
 	ThumbnailPath *string             `json:"thumbnail_path,omitempty"`
 	LocalPath     *string             `json:"local_path,omitempty"`
 }
@@ -169,8 +168,8 @@ type MemberDTO struct {
 	Role       models.MemberRole `json:"role"`
 	Status     models.UserStatus `json:"status"`
 	IsOnline   bool              `json:"is_online"`
-	JoinTime   time.Time         `json:"join_time"`
-	LastSeenAt *time.Time        `json:"last_seen_at,omitempty"`
+	JoinTime   int64             `json:"join_time"`    // Unix timestamp
+	LastSeenAt int64             `json:"last_seen_at"` // Unix timestamp
 	IsMuted    bool              `json:"is_muted"`
 	IsBanned   bool              `json:"is_banned"`
 }
@@ -199,19 +198,20 @@ type BanMemberRequest struct {
 
 // ChallengeDTO 题目数据传输对象
 type ChallengeDTO struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Category    string    `json:"category"`
-	Difficulty  string    `json:"difficulty"`
-	Points      int       `json:"points"`
-	Flags       []string  `json:"-"` // 不返回给前端
-	IsSolved    bool      `json:"is_solved"`
-	SolvedBy    []string  `json:"solved_by"`
-	Hints       []HintDTO `json:"hints"`
-	AssignedTo  []string  `json:"assigned_to"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Category     string    `json:"category"`
+	Difficulty   string    `json:"difficulty"`
+	Points       int       `json:"points"`
+	Flags        []string  `json:"-"` // 不返回给前端
+	IsSolved     bool      `json:"is_solved"`
+	SolvedBy     []string  `json:"solved_by"`
+	Hints        []HintDTO `json:"hints"`
+	AssignedTo   []string  `json:"assigned_to"`
+	SubChannelID string    `json:"sub_channel_id,omitempty"` // 题目专属子频道ID
+	CreatedAt    int64     `json:"created_at"`               // Unix timestamp
+	UpdatedAt    int64     `json:"updated_at"`               // Unix timestamp
 }
 
 // HintDTO 提示数据传输对象
@@ -220,6 +220,16 @@ type HintDTO struct {
 	Content    string `json:"content"`
 	Cost       int    `json:"cost"`
 	IsUnlocked bool   `json:"is_unlocked"`
+}
+
+// SubChannelDTO 子频道数据传输对象
+type SubChannelDTO struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	ParentChannelID string `json:"parent_channel_id"`
+	MessageCount    int64  `json:"message_count"`
+	OnlineCount     int    `json:"online_count"`
+	CreatedAt       int64  `json:"created_at"` // Unix timestamp
 }
 
 // CreateChallengeRequest 创建题目请求
@@ -329,10 +339,10 @@ type NotificationSettings struct {
 
 // RecentChannel 最近频道
 type RecentChannel struct {
-	ChannelID   string    `json:"channel_id"`
-	ChannelName string    `json:"channel_name"`
-	LastJoined  time.Time `json:"last_joined"`
-	Mode        Mode      `json:"mode"` // server or client
+	ChannelID   string `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+	LastJoined  int64  `json:"last_joined"` // Unix timestamp
+	Mode        Mode   `json:"mode"`        // server or client
 }
 
 // ExportOptions 导出选项
@@ -348,7 +358,7 @@ type ExportOptions struct {
 // AppEvent 应用事件（发送到前端）
 type AppEvent struct {
 	Type      string      `json:"type"`
-	Timestamp time.Time   `json:"timestamp"`
+	Timestamp int64       `json:"timestamp"` // Unix timestamp
 	Data      interface{} `json:"data"`
 }
 

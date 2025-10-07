@@ -133,14 +133,14 @@ func (am *AuthManager) HandleJoinRequest(transportMsg *transport.Message) {
 
 	// 6. 创建新成员
 	member := &models.Member{
-		ID:        generateMemberID(),
-		ChannelID: am.server.config.ChannelID,
-		Nickname:  joinReq.Nickname,
-		PublicKey: joinReq.PublicKey,
-		Role:      models.RoleMember,
-		Status:    models.StatusOnline,
-		JoinedAt:  time.Now(),
-		LastSeen:  time.Now(),
+		ID:         generateMemberID(),
+		ChannelID:  am.server.config.ChannelID,
+		Nickname:   joinReq.Nickname,
+		PublicKey:  joinReq.PublicKey,
+		Role:       models.RoleMember,
+		Status:     models.StatusOnline,
+		JoinedAt:   time.Now(),
+		LastSeenAt: time.Now(),
 	}
 
 	// 7. 添加成员到频道

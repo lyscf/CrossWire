@@ -118,7 +118,13 @@ func (t *ARPTransport) Init(config *Config) error {
 	// 获取网卡信息
 	iface, err := net.InterfaceByName(config.Interface)
 	if err != nil {
-		return fmt.Errorf("failed to get interface: %w", err)
+		// 列出所有可用接口以帮助调试
+		allIfaces, _ := net.Interfaces()
+		availableNames := make([]string, 0)
+		for _, i := range allIfaces {
+			availableNames = append(availableNames, i.Name)
+		}
+		return fmt.Errorf("无法找到网络接口 '%s'。可用接口: %v。错误: %w", config.Interface, availableNames, err)
 	}
 	t.iface = iface
 	t.localMAC = iface.HardwareAddr
@@ -149,6 +155,7 @@ func (t *ARPTransport) Start() error {
 	}
 
 	// 打开pcap句柄（原始以太网包）
+	// 注意：需要管理员/root权限
 	handle, err := pcap.OpenLive(
 		t.config.Interface,
 		65536, // 快照长度
@@ -156,7 +163,7 @@ func (t *ARPTransport) Start() error {
 		pcap.BlockForever,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to open pcap: %w", err)
+		return fmt.Errorf("打开网络接口失败（可能需要管理员权限）: %w", err)
 	}
 	t.handle = handle
 

@@ -109,14 +109,8 @@ const visible = computed({
   set: (value) => emit('update:open', value)
 })
 
-// 模拟成员列表
-const members = ref([
-  { id: 'user1', name: 'alice', skills: ['Web', 'Crypto'] },
-  { id: 'user2', name: 'bob', skills: ['Pwn', 'Reverse'] },
-  { id: 'user3', name: 'charlie', skills: ['Misc'] },
-  { id: 'user4', name: 'david', skills: ['Web', 'Pwn'] },
-  { id: 'user5', name: 'eve', skills: ['Forensics'] }
-])
+// 成员列表（从父组件或后端加载）
+const members = ref([])
 
 const memberList = computed(() => 
   members.value.map(m => ({

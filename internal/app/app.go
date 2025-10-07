@@ -164,8 +164,8 @@ func (a *App) emitEvent(eventType string, data interface{}) {
 
 	event := AppEvent{
 		Type:      eventType,
-		Timestamp: time.Now(),
-        Data:      data,
+		Timestamp: time.Now().Unix(),
+		Data:      data,
 	}
 
 	runtime.EventsEmit(a.ctx, "app:event", event)

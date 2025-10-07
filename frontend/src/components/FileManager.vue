@@ -292,49 +292,8 @@ const selectedFile = ref(null)
 const showDetails = ref(false)
 const selectedFiles = ref([])
 
-// 模拟文件数据
-const files = ref([
-  {
-    id: '1',
-    name: 'exploit.py',
-    type: 'code',
-    size: 2048,
-    url: '',
-    uploader: 'alice',
-    uploadedAt: new Date(Date.now() - 600000),
-    downloads: 5
-  },
-  {
-    id: '2',
-    name: 'flag.txt',
-    type: 'document',
-    size: 128,
-    url: '',
-    uploader: 'bob',
-    uploadedAt: new Date(Date.now() - 1200000),
-    downloads: 12
-  },
-  {
-    id: '3',
-    name: 'screenshot.png',
-    type: 'image',
-    size: 524288,
-    url: '/path/to/image.png',
-    uploader: 'charlie',
-    uploadedAt: new Date(Date.now() - 1800000),
-    downloads: 8
-  },
-  {
-    id: '4',
-    name: 'tools.zip',
-    type: 'archive',
-    size: 10485760,
-    url: '',
-    uploader: 'alice',
-    uploadedAt: new Date(Date.now() - 3600000),
-    downloads: 15
-  }
-])
+// 文件数据（从后端加载）
+const files = ref([])
 
 const columns = [
   { title: '文件名', dataIndex: 'name', key: 'name', width: 300 },

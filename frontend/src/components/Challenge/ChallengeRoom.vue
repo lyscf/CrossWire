@@ -232,41 +232,11 @@ const codeLanguage = ref('python')
 const codeInput = ref('')
 const showSubmitModal = ref(false)
 
-// 模拟聊天室消息
-const roomMessages = ref([
-  {
-    id: '1',
-    senderId: 'user1',
-    senderName: 'alice',
-    type: 'text',
-    content: '我发现了一个 SQL 注入点',
-    timestamp: new Date(Date.now() - 1800000)
-  },
-  {
-    id: '2',
-    senderId: 'user2',
-    senderName: 'bob',
-    type: 'code',
-    language: 'python',
-    code: 'import requests\nurl = "http://target.com"\npayload = {"id": "1\' OR \'1\'=\'1"}',
-    timestamp: new Date(Date.now() - 1200000)
-  },
-  {
-    id: '3',
-    senderId: 'user1',
-    senderName: 'alice',
-    type: 'text',
-    content: '试试这个 payload，已经绕过了 WAF',
-    timestamp: new Date(Date.now() - 600000)
-  }
-])
+// 真实数据（从后端加载）
+const roomMessages = ref([])
 
-// 参与成员
-const roomMembers = ref([
-  { id: 'user1', name: 'alice', online: true, progress: 80 },
-  { id: 'user2', name: 'bob', online: true, progress: 60 },
-  { id: 'user3', name: 'charlie', online: false, progress: 30 }
-])
+// 参与成员（从后端加载）
+const roomMembers = ref([])
 
 const getCategoryColor = (category) => {
   const colors = {

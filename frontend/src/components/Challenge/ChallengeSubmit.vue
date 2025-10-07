@@ -131,23 +131,8 @@ const solution = ref('')
 const tools = ref([])
 const fileList = ref([])
 
-// 模拟提交历史
-const submissions = ref([
-  {
-    id: '1',
-    submitter: 'alice',
-    flag: 'flag{wrong_flag}',
-    correct: false,
-    timestamp: new Date(Date.now() - 600000)
-  },
-  {
-    id: '2',
-    submitter: 'bob',
-    flag: 'flag{sql_1nj3ct10n}',
-    correct: true,
-    timestamp: new Date(Date.now() - 300000)
-  }
-])
+// 提交历史（从后端加载）
+const submissions = ref([])
 
 const beforeUpload = (file) => {
   const isLt10M = file.size / 1024 / 1024 < 10

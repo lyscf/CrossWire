@@ -43,11 +43,33 @@ func (cm *ChannelManager) Initialize() error {
 	channel, err := cm.server.channelRepo.GetByID(cm.server.config.ChannelID)
 	if err != nil {
 		// 频道不存在，创建新频道
+		cm.server.logger.Info("[ChannelManager] Channel not found, creating new channel...")
+
+		// 生成加密盐和密钥
+		salt, err := cm.server.crypto.GenerateSalt()
+		if err != nil {
+			return fmt.Errorf("failed to generate salt: %w", err)
+		}
+
+		// 从密码派生哈希
+		passwordHash := cm.server.crypto.HashPassword(cm.server.config.ChannelPassword, salt)
+
+		// 从密码派生加密密钥
+		encryptionKey, err := cm.server.crypto.DeriveKey(cm.server.config.ChannelPassword, salt)
+		if err != nil {
+			return fmt.Errorf("failed to derive encryption key: %w", err)
+		}
+
 		channel = &models.Channel{
 			ID:            cm.server.config.ChannelID,
 			Name:          cm.server.config.ChannelName,
+			PasswordHash:  passwordHash,
+			Salt:          salt,
+			EncryptionKey: encryptionKey,
+			CreatorID:     "server", // 服务端作为创建者
 			MaxMembers:    cm.server.config.MaxMembers,
 			TransportMode: cm.server.config.TransportMode,
+			KeyVersion:    1,
 			CreatedAt:     time.Now(),
 			UpdatedAt:     time.Now(),
 		}
@@ -58,7 +80,42 @@ func (cm *ChannelManager) Initialize() error {
 
 		cm.server.logger.Info("[ChannelManager] Created new channel: %s", channel.Name)
 	} else {
-		cm.server.logger.Info("[ChannelManager] Loaded existing channel: %s", channel.Name)
+		// 频道已存在，更新配置（支持改变传输模式等）
+		cm.server.logger.Info("[ChannelManager] Loaded existing channel: %s, updating configuration...", channel.Name)
+
+		// 更新可变配置
+		channel.Name = cm.server.config.ChannelName
+		channel.MaxMembers = cm.server.config.MaxMembers
+		channel.TransportMode = cm.server.config.TransportMode
+		channel.UpdatedAt = time.Now()
+
+		// 如果密码改变，重新生成哈希和密钥
+		if !cm.server.crypto.VerifyPassword(cm.server.config.ChannelPassword, channel.PasswordHash, channel.Salt) {
+			cm.server.logger.Info("[ChannelManager] Password changed, regenerating keys...")
+
+			// 生成新盐
+			salt, err := cm.server.crypto.GenerateSalt()
+			if err != nil {
+				return fmt.Errorf("failed to generate salt: %w", err)
+			}
+
+			// 重新生成哈希和密钥
+			channel.PasswordHash = cm.server.crypto.HashPassword(cm.server.config.ChannelPassword, salt)
+			channel.Salt = salt
+
+			encryptionKey, err := cm.server.crypto.DeriveKey(cm.server.config.ChannelPassword, salt)
+			if err != nil {
+				return fmt.Errorf("failed to derive encryption key: %w", err)
+			}
+			channel.EncryptionKey = encryptionKey
+		}
+
+		// 保存更新
+		if err := cm.server.channelRepo.Update(channel); err != nil {
+			return fmt.Errorf("failed to update channel: %w", err)
+		}
+
+		cm.server.logger.Info("[ChannelManager] Channel configuration updated")
 	}
 
 	cm.channel = channel
@@ -66,6 +123,11 @@ func (cm *ChannelManager) Initialize() error {
 	// 加载成员列表
 	if err := cm.loadMembers(); err != nil {
 		return fmt.Errorf("failed to load members: %w", err)
+	}
+
+	// 确保服务器自己作为成员存在
+	if err := cm.ensureServerMember(); err != nil {
+		return fmt.Errorf("failed to ensure server member: %w", err)
 	}
 
 	// 加载禁言记录
@@ -115,6 +177,45 @@ func (cm *ChannelManager) loadMuteRecords() error {
 
 		cm.server.logger.Info("[ChannelManager] Loaded %d active mute records", len(cm.muteRecords))
 	}
+
+	return nil
+}
+
+// ensureServerMember 确保服务器自己作为成员存在
+func (cm *ChannelManager) ensureServerMember() error {
+	serverMemberID := "server"
+
+	// 检查服务器成员是否已存在
+	if cm.HasMember(serverMemberID) {
+		cm.server.logger.Info("[ChannelManager] Server member already exists")
+		return nil
+	}
+
+	// 创建服务器成员
+	serverMember := &models.Member{
+		ID:           serverMemberID,
+		ChannelID:    cm.server.config.ChannelID,
+		Nickname:     "Server",
+		Role:         models.RoleAdmin,
+		Status:       models.StatusOnline,
+		PublicKey:    cm.server.config.PublicKey,
+		JoinedAt:     time.Now(),
+		LastSeenAt:   time.Now(),
+		MessageCount: 0,
+		FilesShared:  0,
+	}
+
+	// 保存到数据库
+	if err := cm.server.memberRepo.Create(serverMember); err != nil {
+		return fmt.Errorf("failed to create server member: %w", err)
+	}
+
+	// 添加到内存
+	cm.membersMutex.Lock()
+	cm.members[serverMemberID] = serverMember
+	cm.membersMutex.Unlock()
+
+	cm.server.logger.Info("[ChannelManager] Created server member")
 
 	return nil
 }
@@ -230,7 +331,8 @@ func (cm *ChannelManager) UpdateMemberStatus(memberID string, status models.User
 
 	oldStatus := member.Status
 	member.Status = status
-	member.LastSeen = time.Now()
+	member.LastSeenAt = time.Now()
+	member.LastHeartbeat = time.Now()
 
 	// 更新数据库
 	if err := cm.server.memberRepo.UpdateStatus(memberID, status); err != nil {
@@ -446,7 +548,8 @@ func (cm *ChannelManager) BanMember(memberID string, reason string, bannedBy str
 
 	// 更新成员状态为封禁
 	member.Status = models.StatusOffline
-	member.LastSeen = time.Now()
+	member.LastSeenAt = time.Now()
+	member.LastHeartbeat = time.Now()
 
 	// 创建封禁记录（使用禁言记录结构，但时间更长）
 	var expiresAt *time.Time

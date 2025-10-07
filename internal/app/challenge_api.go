@@ -358,18 +358,19 @@ func (a *App) challengeToDTO(challenge *models.Challenge) *ChallengeDTO {
 	}
 
 	return &ChallengeDTO{
-		ID:          challenge.ID,
-		Title:       challenge.Title,
-		Description: challenge.Description,
-		Category:    challenge.Category,
-		Difficulty:  challenge.Difficulty,
-		Points:      challenge.Points,
-		Flags:       []string{}, // 不返回flags给前端
-		IsSolved:    len(challenge.SolvedBy) > 0,
-		SolvedBy:    challenge.SolvedBy,
-		Hints:       hints,
-		AssignedTo:  challenge.AssignedTo,
-		CreatedAt:   challenge.CreatedAt,
-		UpdatedAt:   challenge.UpdatedAt,
+		ID:           challenge.ID,
+		Title:        challenge.Title,
+		Description:  challenge.Description,
+		Category:     challenge.Category,
+		Difficulty:   challenge.Difficulty,
+		Points:       challenge.Points,
+		Flags:        []string{}, // 不返回flags给前端
+		IsSolved:     len(challenge.SolvedBy) > 0,
+		SolvedBy:     challenge.SolvedBy,
+		Hints:        hints,
+		AssignedTo:   challenge.AssignedTo,
+		SubChannelID: challenge.SubChannelID,
+		CreatedAt:    challenge.CreatedAt.Unix(),
+		UpdatedAt:    challenge.UpdatedAt.Unix(),
 	}
 }

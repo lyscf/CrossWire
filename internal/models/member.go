@@ -25,15 +25,14 @@ type Member struct {
 	OnlineTime   int64          `gorm:"type:integer;default:0" json:"online_time"` // 秒
 
 	// APP层使用的字段
-	IsOnline   bool       `gorm:"type:integer;default:0;index:idx_members_online" json:"is_online"`
-	IsMuted    bool       `gorm:"type:integer;default:0;index:idx_members_muted" json:"is_muted"`
-	IsBanned   bool       `gorm:"type:integer;default:0;index:idx_members_banned" json:"is_banned"`
-	JoinTime   time.Time  `gorm:"type:integer;not null" json:"join_time"`     // 别名：JoinedAt
-	LastSeenAt *time.Time `gorm:"type:integer" json:"last_seen_at,omitempty"` // 别名：LastSeen（指针类型）
+	IsOnline   bool      `gorm:"type:integer;default:0;index:idx_members_online" json:"is_online"`
+	IsMuted    bool      `gorm:"type:integer;default:0;index:idx_members_muted" json:"is_muted"`
+	IsBanned   bool      `gorm:"type:integer;default:0;index:idx_members_banned" json:"is_banned"`
+	JoinTime   time.Time `gorm:"type:integer;not null" json:"join_time"`
+	LastSeenAt time.Time `gorm:"type:integer;not null" json:"last_seen_at"`
 
 	// 原有时间字段
 	JoinedAt      time.Time `gorm:"type:integer;not null" json:"joined_at"`
-	LastSeen      time.Time `gorm:"type:integer;not null;index:idx_members_last_seen" json:"last_seen"`
 	LastHeartbeat time.Time `gorm:"type:integer;not null" json:"last_heartbeat"`
 	Metadata      JSONField `gorm:"type:text" json:"metadata,omitempty"`
 
@@ -55,28 +54,24 @@ func (m *Member) BeforeCreate(tx *gorm.DB) error {
 	if m.JoinTime.IsZero() {
 		m.JoinTime = now
 	}
-	if m.LastSeen.IsZero() {
-		m.LastSeen = now
+	if m.LastSeenAt.IsZero() {
+		m.LastSeenAt = now
 	}
 	if m.LastHeartbeat.IsZero() {
 		m.LastHeartbeat = now
-	}
-	// 同步 LastSeenAt
-	if m.LastSeenAt == nil {
-		m.LastSeenAt = &now
 	}
 	return nil
 }
 
 // AfterFind GORM 钩子 - 同步兼容字段
 func (m *Member) AfterFind(tx *gorm.DB) error {
-	// 同步 JoinTime
+	// 同步 JoinTime（向后兼容）
 	if m.JoinTime.IsZero() && !m.JoinedAt.IsZero() {
 		m.JoinTime = m.JoinedAt
 	}
-	// 同步 LastSeenAt
-	if m.LastSeenAt == nil && !m.LastSeen.IsZero() {
-		m.LastSeenAt = &m.LastSeen
+	// 同步 JoinedAt（向后兼容）
+	if m.JoinedAt.IsZero() && !m.JoinTime.IsZero() {
+		m.JoinedAt = m.JoinTime
 	}
 	// 判断在线状态
 	m.IsOnline = m.Status != StatusOffline && time.Since(m.LastHeartbeat) < 30*time.Second

@@ -22,7 +22,7 @@ func (a *App) StartServerMode(config ServerConfig) Response {
 
 	// 验证配置
 	if err := a.validateServerConfig(&config); err != nil {
-		return NewErrorResponse("invalid_config", "配置无效", err.Error())
+		return NewErrorResponse("invalid_config", err.Error(), "")
 	}
 
 	a.logger.Info("Starting server mode: %s", config.ChannelName)
@@ -44,12 +44,15 @@ func (a *App) StartServerMode(config ServerConfig) Response {
 	// 创建服务端实例
 	srv, err := server.NewServer(srvCfg, a.db, a.eventBus, a.logger)
 	if err != nil {
+		a.logger.Error("Failed to create server: %v", err)
 		return NewErrorResponse("server_error", "服务端创建失败", err.Error())
 	}
 
 	// 启动服务端
+	a.logger.Info("Starting server...")
 	if err := srv.Start(); err != nil {
-		return NewErrorResponse("start_error", "服务端启动失败", err.Error())
+		a.logger.Error("Failed to start server: %v", err)
+		return NewErrorResponse("start_error", err.Error(), "")
 	}
 
 	// 更新状态
@@ -133,7 +136,7 @@ func (a *App) getServerStatus() *ServerStatus {
 		ChannelName:   channel.Name,
 		TransportMode: string(channel.TransportMode),
 		MemberCount:   len(members),
-		StartTime:     stats.StartTime,
+		StartTime:     stats.StartTime.Unix(),
 		NetworkStats:  &NetworkStats{},
 	}
 }
@@ -187,9 +190,49 @@ func (a *App) validateServerConfig(config *ServerConfig) error {
 	return nil
 }
 
-// createTransport 旧接口（已不使用）
-func (a *App) createTransport(mode models.TransportMode, netInterface, address string, port int) (transport.Transport, error) {
-	factory := transport.NewFactory()
-	cfg := &transport.Config{Mode: mode, Interface: netInterface, Port: port}
-	return factory.CreateWithConfig(mode, cfg)
+// GetSubChannels 获取所有题目子频道（服务端和客户端都可查询）
+func (a *App) GetSubChannels() Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	var channels []*models.Channel
+	var err error
+
+	// 服务端和客户端都可以查询子频道
+	if mode == ModeServer && srv != nil {
+		channels, err = srv.GetSubChannels()
+	} else if mode == ModeClient && cli != nil {
+		// 客户端通过本地数据库查询（客户端也会同步子频道信息）
+		channels, err = cli.GetSubChannels()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	if err != nil {
+		a.logger.Error("Failed to get sub-channels: %v", err)
+		return NewErrorResponse("query_error", "查询子频道失败", err.Error())
+	}
+
+	// 转换为DTO
+	dtos := make([]*SubChannelDTO, 0, len(channels))
+	for _, ch := range channels {
+		dtos = append(dtos, &SubChannelDTO{
+			ID:              ch.ID,
+			Name:            ch.Name,
+			ParentChannelID: ch.ParentChannelID,
+			MessageCount:    ch.MessageCount,
+			OnlineCount:     ch.OnlineCount,
+			CreatedAt:       ch.CreatedAt.Unix(),
+		})
+	}
+
+	a.logger.Info("Found %d sub-channels", len(dtos))
+	return NewSuccessResponse(dtos)
 }

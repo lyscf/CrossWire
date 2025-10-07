@@ -142,6 +142,10 @@ export function GetServerStatus() {
   return window['go']['app']['App']['GetServerStatus']();
 }
 
+export function GetSubChannels() {
+  return window['go']['app']['App']['GetSubChannels']();
+}
+
 export function GetUserProfile() {
   return window['go']['app']['App']['GetUserProfile']();
 }

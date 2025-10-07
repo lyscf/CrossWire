@@ -182,11 +182,7 @@ func (db *Database) migrateChannelDB() error {
 		return err
 	}
 
-	// 创建/修复消息全文索引（FTS5）
-	if err := db.ensureFTS5(); err != nil {
-		return err
-	}
-
+	// 注意：不使用 FTS5，搜索功能使用 LIKE 查询实现
 	return nil
 }
 
@@ -240,65 +236,6 @@ func (db *Database) ChannelRepo() *ChannelRepository {
 // AuditRepo 获取审计仓库
 func (db *Database) AuditRepo() *AuditRepository {
 	return NewAuditRepository(db)
-}
-
-// ensureFTS5 确保创建 FTS5 虚拟表与触发器
-func (db *Database) ensureFTS5() error {
-	// 检查是否已存在
-	type countRow struct{ C int64 }
-	var cnt countRow
-	if err := db.channelDB.Raw("SELECT count(1) as c FROM sqlite_master WHERE type='table' AND name='messages_fts'").Scan(&cnt).Error; err != nil {
-		return err
-	}
-	if cnt.C == 0 {
-		// 创建 FTS5 虚拟表，索引 content_text, sender_nickname, tags
-		if err := db.channelDB.Exec(`
-            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-                content_text,
-                sender_nickname,
-                tags,
-                content='messages',
-                content_rowid='rowid'
-            );
-        `).Error; err != nil {
-			return err
-		}
-		// 初始导入现有消息
-		if err := db.channelDB.Exec(`
-            INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
-            SELECT rowid, content_text, sender_nickname, json_extract(tags, '$') FROM messages;
-        `).Error; err != nil {
-			// 某些 SQLite 构建对 json_extract(tags, '$') 不兼容，回退为 tags 原文
-			_ = db.channelDB.Exec(`
-                INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
-                SELECT rowid, content_text, sender_nickname, tags FROM messages;
-            `).Error
-		}
-	}
-
-	// 触发器：插入/删除/更新 同步 FTS 表
-	stmts := []string{
-		`CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
-            VALUES (new.rowid, new.content_text, new.sender_nickname, new.tags);
-        END;`,
-		`CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, content_text, sender_nickname, tags)
-            VALUES ('delete', old.rowid, old.content_text, old.sender_nickname, old.tags);
-        END;`,
-		`CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, content_text, sender_nickname, tags)
-            VALUES ('delete', old.rowid, old.content_text, old.sender_nickname, old.tags);
-            INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
-            VALUES (new.rowid, new.content_text, new.sender_nickname, new.tags);
-        END;`,
-	}
-	for _, sql := range stmts {
-		if err := db.channelDB.Exec(sql).Error; err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Close 关闭数据库连接
@@ -465,7 +402,7 @@ func (db *Database) GetMessages(channelID string, limit, offset int) ([]*models.
 	return db.MessageRepo().GetByChannelID(channelID, limit, offset)
 }
 
-// SearchMessages 搜索消息（如果FTS表不存在则回退到LIKE）
+// SearchMessages 搜索消息（使用LIKE查询）
 func (db *Database) SearchMessages(channelID, keyword string, limit, offset int) ([]*models.Message, error) {
 	if db.channelDB == nil {
 		return nil, fmt.Errorf("channel database is not opened")
@@ -475,34 +412,10 @@ func (db *Database) SearchMessages(channelID, keyword string, limit, offset int)
 		return db.GetMessages(channelID, limit, offset)
 	}
 
-	// 优先尝试使用 FTS5 虚拟表 messages_fts
-	type countRow struct{ C int64 }
-	var cnt countRow
-	// 检测虚拟表是否存在
-	err := db.channelDB.Raw("SELECT count(1) as c FROM sqlite_master WHERE type='table' AND name='messages_fts'").Scan(&cnt).Error
-	if err != nil {
-		return nil, err
-	}
-
-	var messages []*models.Message
-	if cnt.C > 0 {
-		// 使用 FTS 搜索
-		err = db.channelDB.Raw(`
-            SELECT m.* FROM messages m
-            JOIN messages_fts fts ON m.rowid = fts.rowid
-            WHERE fts MATCH ? AND m.channel_id = ? AND m.deleted = 0
-            ORDER BY m.timestamp DESC
-            LIMIT ? OFFSET ?
-        `, keyword, channelID, limit, offset).Scan(&messages).Error
-		if err != nil {
-			return nil, err
-		}
-		return messages, nil
-	}
-
-	// 回退：LIKE 搜索（content_text / sender_nickname / tags）
+	// 使用 LIKE 搜索（content_text / sender_nickname / tags）
 	like := "%" + keyword + "%"
-	err = db.channelDB.Where("channel_id = ? AND deleted = 0 AND (content_text LIKE ? OR sender_nickname LIKE ? OR tags LIKE ?)",
+	var messages []*models.Message
+	err := db.channelDB.Where("channel_id = ? AND deleted = 0 AND (content_text LIKE ? OR sender_nickname LIKE ? OR tags LIKE ?)",
 		channelID, like, like, like).
 		Order("timestamp DESC").
 		Limit(limit).

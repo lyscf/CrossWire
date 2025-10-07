@@ -1,12 +1,12 @@
 package app
 
 import (
-    "fmt"
-    "time"
+	"fmt"
+	"time"
 
-    "crosswire/internal/client"
-    "crosswire/internal/models"
-    "crosswire/internal/transport"
+	"crosswire/internal/client"
+	"crosswire/internal/models"
+	"crosswire/internal/transport"
 )
 
 // ==================== 客户端模式 API ====================
@@ -28,25 +28,25 @@ func (a *App) StartClientMode(config ClientConfig) Response {
 
 	a.logger.Info("Starting client mode")
 
-    // 创建客户端配置
-    clientConfig := &client.Config{
-        ChannelID:       fmt.Sprintf("%s", config.ServerAddress), // 简化：占位
-        ChannelPassword: config.Password,
-        Nickname:        config.Nickname,
-        Avatar:          config.Avatar,
-        TransportMode:   config.TransportMode,
-        TransportConfig: &transport.Config{Mode: config.TransportMode, Interface: config.NetworkInterface, Port: config.Port},
-        SyncInterval:    5 * time.Minute,
-        MaxSyncMessages: 1000,
-        CacheSize:       5000,
-        CacheDuration:   24 * time.Hour,
-        JoinTimeout:     30 * time.Second,
-        SyncTimeout:     10 * time.Second,
-        DataDir:         "./data",
-    }
+	// 创建客户端配置
+	clientConfig := &client.Config{
+		ChannelID:       fmt.Sprintf("%s", config.ServerAddress), // 简化：占位
+		ChannelPassword: config.Password,
+		Nickname:        config.Nickname,
+		Avatar:          config.Avatar,
+		TransportMode:   config.TransportMode,
+		TransportConfig: &transport.Config{Mode: config.TransportMode, Interface: config.NetworkInterface, Port: config.Port},
+		SyncInterval:    5 * time.Minute,
+		MaxSyncMessages: 1000,
+		CacheSize:       5000,
+		CacheDuration:   24 * time.Hour,
+		JoinTimeout:     30 * time.Second,
+		SyncTimeout:     10 * time.Second,
+		DataDir:         "./data",
+	}
 
-    // 创建客户端实例
-    cli, err := client.NewClient(clientConfig, a.db, a.eventBus)
+	// 创建客户端实例
+	cli, err := client.NewClient(clientConfig, a.db, a.eventBus)
 	if err != nil {
 		return NewErrorResponse("client_error", "客户端创建失败", err.Error())
 	}
@@ -136,7 +136,7 @@ func (a *App) getClientStatus() *ClientStatus {
 		ChannelName:   channelInfo.Name,
 		MemberID:      a.client.GetMemberID(),
 		TransportMode: string(channelInfo.TransportMode),
-		ConnectTime:   a.client.GetConnectTime(),
+		ConnectTime:   a.client.GetConnectTime().Unix(),
 	}
 }
 
@@ -157,7 +157,7 @@ func (a *App) DiscoverServers(timeout int) Response {
 	a.logger.Info("Discovering servers...")
 
 	// 调用客户端的服务发现功能
-    servers, err := cli.Discover(time.Duration(timeout) * time.Second)
+	servers, err := cli.Discover(time.Duration(timeout) * time.Second)
 	if err != nil {
 		return NewErrorResponse("discovery_error", "服务发现失败", err.Error())
 	}

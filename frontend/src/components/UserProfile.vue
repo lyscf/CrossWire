@@ -4,6 +4,7 @@
     title="用户资料"
     width="600px"
     :footer="null"
+    :loading="loading"
   >
     <div class="user-profile">
       <!-- 用户头像和基本信息 -->
@@ -193,7 +194,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   EditOutlined,
@@ -211,6 +212,7 @@ import {
   FlagOutlined
 } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
+import { getMember, getMyInfo, updateUserProfile } from '@/api/app'
 
 const props = defineProps({
   open: {
@@ -235,44 +237,26 @@ const visible = computed({
 })
 
 const editMode = ref(false)
+const loading = ref(false)
 
-// 模拟用户数据
+// 用户数据（从后端加载）
 const user = ref({
-  id: 'user_001',
-  name: 'alice',
-  nickname: 'Alice',
-  email: 'alice@example.com',
+  id: props.userId || 'unknown',
+  name: 'User',
+  nickname: 'User',
+  email: '',
   avatar: null,
   role: 'member',
-  online: true,
-  skills: ['Web', 'Crypto'],
-  bio: '喜欢研究Web安全和密码学，擅长SQL注入和XSS攻击。',
+  online: false,
+  skills: [],
+  bio: '',
   stats: {
-    solved: 42,
-    points: 3500,
-    rank: 3
+    solved: 0,
+    points: 0,
+    rank: 0
   },
-  activities: [
-    {
-      id: '1',
-      type: 'solve',
-      text: '完成了题目 "SQL注入进阶"',
-      time: new Date(Date.now() - 600000)
-    },
-    {
-      id: '2',
-      type: 'message',
-      text: '发送了一条消息',
-      time: new Date(Date.now() - 1200000)
-    },
-    {
-      id: '3',
-      type: 'flag',
-      text: '提交了正确的 Flag',
-      time: new Date(Date.now() - 1800000)
-    }
-  ],
-  joinedAt: new Date('2024-01-15')
+  activities: [],
+  joinedAt: new Date()
 })
 
 const editData = ref({
@@ -282,29 +266,94 @@ const editData = ref({
   bio: user.value.bio
 })
 
-watch(() => props.open, (newVal) => {
-  if (newVal) {
-    // 重置编辑数据
-    editData.value = {
-      nickname: user.value.nickname,
-      email: user.value.email,
-      skills: [...user.value.skills],
-      bio: user.value.bio
+// 加载用户数据
+const loadUserData = async () => {
+  loading.value = true
+  try {
+    let memberData
+    
+    // 如果有userId且不是当前用户，获取指定成员信息
+    if (props.userId && !props.isEditable) {
+      memberData = await getMember(props.userId)
+    } else {
+      // 否则获取当前用户信息
+      memberData = await getMyInfo()
     }
+    
+    console.log('Loaded user data:', memberData)
+    
+    // 更新用户数据
+    if (memberData) {
+      user.value = {
+        id: memberData.id || memberData.ID || props.userId,
+        name: memberData.nickname || memberData.Nickname || 'User',
+        nickname: memberData.nickname || memberData.Nickname || 'User',
+        email: memberData.email || memberData.Email || '',
+        avatar: memberData.avatar || memberData.Avatar || null,
+        role: memberData.role || memberData.Role || 'member',
+        online: memberData.is_online || memberData.IsOnline || false,
+        skills: memberData.skills || memberData.Skills || [],
+        bio: memberData.bio || memberData.Bio || '',
+        stats: {
+          solved: memberData.solved_challenges || 0,
+          points: memberData.total_points || 0,
+          rank: memberData.rank || 0
+        },
+        activities: [],
+        joinedAt: memberData.join_time ? new Date(memberData.join_time * 1000) : new Date()
+      }
+      
+      // 更新编辑数据
+      editData.value = {
+        nickname: user.value.nickname,
+        email: user.value.email,
+        skills: [...user.value.skills],
+        bio: user.value.bio
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load user data:', error)
+    message.warning('加载用户资料失败，显示默认数据')
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(() => props.open, async (newVal) => {
+  if (newVal) {
     editMode.value = false
+    await loadUserData()
   }
 })
 
-const saveProfile = () => {
-  // 更新用户数据
-  user.value.nickname = editData.value.nickname
-  user.value.email = editData.value.email
-  user.value.skills = editData.value.skills
-  user.value.bio = editData.value.bio
-  
-  message.success('资料已保存')
-  editMode.value = false
-  emit('update', user.value)
+const saveProfile = async () => {
+  loading.value = true
+  try {
+    // 调用后端API更新用户配置
+    const profileData = {
+      nickname: editData.value.nickname,
+      email: editData.value.email,
+      skills: editData.value.skills,
+      bio: editData.value.bio
+    }
+    
+    await updateUserProfile(profileData)
+    
+    // 更新本地数据
+    user.value.nickname = editData.value.nickname
+    user.value.email = editData.value.email
+    user.value.skills = editData.value.skills
+    user.value.bio = editData.value.bio
+    
+    message.success('资料已保存')
+    editMode.value = false
+    emit('update', user.value)
+  } catch (error) {
+    console.error('Failed to save profile:', error)
+    message.error('保存失败: ' + (error.message || '未知错误'))
+  } finally {
+    loading.value = false
+  }
 }
 
 const getAvatarColor = (name) => {

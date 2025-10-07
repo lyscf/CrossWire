@@ -265,15 +265,31 @@ func (cm *ChallengeManager) handleChallengeCreated(event *events.Event) {
 		return
 	}
 
+	challenge := challengeEvent.Challenge
+
 	cm.challengesMutex.Lock()
-	cm.challenges[challengeEvent.Challenge.ID] = challengeEvent.Challenge
+	cm.challenges[challenge.ID] = challenge
 	cm.challengesMutex.Unlock()
 
 	cm.statsMutex.Lock()
 	cm.stats.TotalChallenges++
 	cm.statsMutex.Unlock()
 
-	cm.client.logger.Info("[ChallengeManager] New challenge created: %s", challengeEvent.Challenge.Title)
+	// 如果题目有关联的子频道，尝试同步子频道信息
+	if challenge.SubChannelID != "" {
+		go cm.syncSubChannel(challenge.SubChannelID)
+	}
+
+	cm.client.logger.Info("[ChallengeManager] New challenge created: %s (sub-channel: %s)",
+		challenge.Title, challenge.SubChannelID)
+}
+
+// syncSubChannel 同步子频道信息（从服务端查询并保存到本地）
+func (cm *ChallengeManager) syncSubChannel(subChannelID string) {
+	// TODO: 实现从服务端同步子频道详细信息的逻辑
+	// 当前子频道信息会在客户端调用 GetSubChannels() 时从本地数据库查询
+	// 如果本地不存在，可以通过请求服务端获取完整的子频道信息
+	cm.client.logger.Debug("[ChallengeManager] Sub-channel sync requested: %s (not yet implemented)", subChannelID)
 }
 
 // handleChallengeAssigned 处理挑战分配事件

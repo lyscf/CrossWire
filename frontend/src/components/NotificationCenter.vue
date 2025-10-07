@@ -160,45 +160,8 @@ dayjs.locale('zh-cn')
 
 const activeTab = ref('all')
 
-// 模拟通知数据
-const notifications = ref([
-  {
-    id: '1',
-    type: 'mention',
-    title: 'alice @了你',
-    description: '在消息中提到了你：@bob 这道题怎么做？',
-    timestamp: new Date(Date.now() - 300000),
-    read: false,
-    link: '/chat?messageId=123'
-  },
-  {
-    id: '2',
-    type: 'challenge',
-    title: '题目分配',
-    description: 'admin 给你分配了新题目：SQL注入进阶',
-    timestamp: new Date(Date.now() - 600000),
-    read: false,
-    link: '/challenges?id=456'
-  },
-  {
-    id: '3',
-    type: 'flag',
-    title: 'Flag提交成功',
-    description: '你提交的 Flag 正确！获得 500 分',
-    timestamp: new Date(Date.now() - 900000),
-    read: true,
-    link: '/challenges'
-  },
-  {
-    id: '4',
-    type: 'system',
-    title: '系统通知',
-    description: '频道已升级到新版本，新增@提及功能',
-    timestamp: new Date(Date.now() - 1800000),
-    read: true,
-    link: null
-  }
-])
+// 通知数据（从后端加载）
+const notifications = ref([])
 
 const allNotifications = computed(() => notifications.value)
 

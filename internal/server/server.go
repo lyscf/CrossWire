@@ -238,26 +238,39 @@ func (s *Server) Start() error {
 	s.logger.Info("[Server] Starting server for channel: %s", s.config.ChannelID)
 
 	// 初始化传输层
+	s.logger.Info("[Server] Step 1: Initializing transport layer (mode: %s)...", s.config.TransportMode)
 	if err := s.initTransport(); err != nil {
-		return fmt.Errorf("failed to init transport: %w", err)
+		s.logger.Error("[Server] Failed to initialize transport: %v", err)
+		return fmt.Errorf("初始化传输层失败: %w", err)
 	}
+	s.logger.Info("[Server] Transport layer initialized successfully")
 
 	// 加载或创建频道
+	s.logger.Info("[Server] Step 2: Initializing channel manager...")
 	if err := s.channelManager.Initialize(); err != nil {
-		return fmt.Errorf("failed to initialize channel: %w", err)
+		s.logger.Error("[Server] Failed to initialize channel: %v", err)
+		return fmt.Errorf("初始化频道失败: %w", err)
 	}
+	s.logger.Info("[Server] Channel manager initialized successfully")
 
 	// 启动传输层
+	s.logger.Info("[Server] Step 3: Starting transport layer...")
 	if err := s.transport.Start(); err != nil {
-		return fmt.Errorf("failed to start transport: %w", err)
+		s.logger.Error("[Server] Failed to start transport: %v", err)
+		return fmt.Errorf("启动传输层失败: %w", err)
 	}
+	s.logger.Info("[Server] Transport layer started successfully")
 
 	// 订阅传输层消息
+	s.logger.Info("[Server] Step 4: Subscribing to transport messages...")
 	if err := s.transport.Subscribe(s.handleIncomingMessage); err != nil {
-		return fmt.Errorf("failed to subscribe to transport: %w", err)
+		s.logger.Error("[Server] Failed to subscribe to transport: %v", err)
+		return fmt.Errorf("订阅传输层消息失败: %w", err)
 	}
+	s.logger.Info("[Server] Subscribed to transport successfully")
 
 	// 启动子模块
+	s.logger.Info("[Server] Step 5: Starting sub-modules...")
 	s.wg.Add(1)
 	go s.broadcastManager.Run()
 
@@ -266,13 +279,16 @@ func (s *Server) Start() error {
 
 	// 启动离线消息管理器
 	if err := s.offlineManager.Start(); err != nil {
-		return fmt.Errorf("failed to start offline manager: %w", err)
+		s.logger.Error("[Server] Failed to start offline manager: %v", err)
+		return fmt.Errorf("启动离线消息管理器失败: %w", err)
 	}
 
 	s.wg.Add(1)
 	go s.statsReporter()
+	s.logger.Info("[Server] Sub-modules started successfully")
 
 	// 发布服务信息（供客户端发现）
+	s.logger.Info("[Server] Step 6: Announcing service...")
 	if err := s.announceService(); err != nil {
 		s.logger.Warn("[Server] Failed to announce service: %v", err)
 		// 不阻止启动，只是警告
@@ -280,7 +296,7 @@ func (s *Server) Start() error {
 		s.logger.Info("[Server] Service announced successfully")
 	}
 
-	s.logger.Info("[Server] Server started successfully")
+	s.logger.Info("[Server] ✓ Server started successfully")
 
 	// 发布事件
 	s.eventBus.Publish(events.EventSystemConnected, &events.SystemEvent{
@@ -706,6 +722,12 @@ func (s *Server) GetChallenges() ([]*models.Challenge, error) {
 // GetChallenge 获取单个题目
 func (s *Server) GetChallenge(challengeID string) (*models.Challenge, error) {
 	return s.challengeRepo.GetByID(challengeID)
+}
+
+// GetSubChannels 获取所有题目子频道
+func (s *Server) GetSubChannels() ([]*models.Channel, error) {
+	// 使用channelRepo获取所有子频道
+	return s.channelRepo.GetSubChannels(s.config.ChannelID)
 }
 
 // UpdateChallenge 更新题目
