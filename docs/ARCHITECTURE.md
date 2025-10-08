@@ -1036,26 +1036,20 @@ logs/
     广播系统消息
 ```
 
-#### 11.2.3 Flag提交流程
+#### 11.2.3 Flag提交流程（协作平台：不验证，明文存储）
 
 ```
 成员 → SubmitFlag(challenge_id, flag)
        ↓
    验证访问权限
        ↓
-   计算Flag哈希
+   记录提交（明文）
        ↓
-   与存储的哈希比对
+   更新题目状态/进度
        ↓
-   记录提交历史
+   广播系统消息
        ↓
-   正确？ → 更新题目状态
-   │           ↓
-   │       发送祝贺消息
-   │           ↓
-   │       更新成员统计
-   │           ↓
-   └──────→ 返回结果
+   返回结果
 ```
 
 ### 11.3 模块接口
@@ -1227,22 +1221,7 @@ export const useChallengeStore = defineStore('challenge', {
 - ✅ **提交记录加密**：历史提交的Flag加密存储
 - ✅ **哈希加盐**：使用题目ID作为盐值
 
-```go
-func hashFlag(flag, challengeID string) string {
-    h := sha256.New()
-    h.Write([]byte(flag))
-    h.Write([]byte(challengeID))  // 加盐
-    return hex.EncodeToString(h.Sum(nil))
-}
-
-func verifyFlag(submitted, challengeID, storedHash string) bool {
-    computedHash := hashFlag(submitted, challengeID)
-    return subtle.ConstantTimeCompare(
-        []byte(computedHash),
-        []byte(storedHash),
-    ) == 1
-}
-```
+> 协作平台不进行Flag哈希或验证，以上示例已废弃。
 
 #### 11.6.2 聊天室隔离
 

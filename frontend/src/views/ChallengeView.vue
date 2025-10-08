@@ -91,7 +91,16 @@ import ChallengeList from '@/components/Challenge/ChallengeList.vue'
 import ChallengeDetail from '@/components/Challenge/ChallengeDetail.vue'
 import ChallengeCreate from '@/components/Challenge/ChallengeCreate.vue'
 import { useChallengeStore } from '@/stores/challenge'
-import { getChallenges, createChallenge, assignChallenge, submitFlag } from '@/api/app'
+import { 
+  getChallenges, 
+  createChallenge, 
+  assignChallenge, 
+  submitFlag,
+  getLeaderboard,
+  getChallengeStats,
+  updateChallengeProgress,
+  deleteChallenge
+} from '@/api/app'
 
 const challengeStore = useChallengeStore()
 const isAdmin = ref(true) // TODO: 从用户状态获取

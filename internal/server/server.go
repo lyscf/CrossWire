@@ -285,6 +285,23 @@ func (s *Server) Start() error {
 
 	s.wg.Add(1)
 	go s.statsReporter()
+
+	// 启动离线检测任务（每60秒检查，无心跳>90秒视为离线）
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		threshold := 90 * time.Second
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-ticker.C:
+				s.channelManager.CheckOfflineMembers(threshold)
+			}
+		}
+	}()
 	s.logger.Info("[Server] Sub-modules started successfully")
 
 	// 发布服务信息（供客户端发现）
@@ -757,7 +774,11 @@ func (s *Server) GetChallengeProgress(challengeID, memberID string) (*models.Cha
 
 // UpdateChallengeProgress 更新题目进度
 func (s *Server) UpdateChallengeProgress(progress *models.ChallengeProgress) error {
-	return s.challengeRepo.UpdateProgress(progress)
+	if progress == nil {
+		return errors.New("progress is nil")
+	}
+	// 统一经由 ChallengeManager 以发布事件
+	return s.challengeManager.UpdateProgress(progress.ChallengeID, progress.MemberID, progress.Progress, progress.Summary)
 }
 
 // 注意：排行榜和统计功能已禁用（用户不需要）

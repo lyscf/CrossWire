@@ -78,7 +78,6 @@ type MessageDTO struct {
 	Type       models.MessageType     `json:"type"`
 	Content    map[string]interface{} `json:"content"`
 	Timestamp  int64                  `json:"timestamp"` // Unix timestamp
-	IsEdited   bool                   `json:"is_edited"`
 	IsDeleted  bool                   `json:"is_deleted"`
 	IsPinned   bool                   `json:"is_pinned"`
 	ReplyToID  *string                `json:"reply_to_id,omitempty"`
@@ -96,6 +95,7 @@ type MessageReaction struct {
 type SendMessageRequest struct {
 	Content   string             `json:"content"`
 	Type      models.MessageType `json:"type"`
+	ChannelID *string            `json:"channel_id,omitempty"`
 	ReplyToID *string            `json:"reply_to_id,omitempty"`
 }
 
@@ -115,6 +115,26 @@ type SearchMessagesRequest struct {
 	EndTime   *int64              `json:"end_time,omitempty"`   // Unix timestamp
 	Limit     int                 `json:"limit"`
 	Offset    int                 `json:"offset"`
+}
+
+// PinMessageRequest 置顶消息请求
+type PinMessageRequest struct {
+	MessageID string `json:"message_id"`
+	Reason    string `json:"reason"`
+}
+
+// PinnedMessageDTO 置顶消息传输对象
+type PinnedMessageDTO struct {
+	ID             int    `json:"id"`
+	ChannelID      string `json:"channel_id"`
+	MessageID      string `json:"message_id"`
+	PinnedBy       string `json:"pinned_by"`
+	Reason         string `json:"reason,omitempty"`
+	PinnedAt       int64  `json:"pinned_at"`
+	DisplayOrder   int    `json:"display_order"`
+	ContentText    string `json:"content_text"`
+	SenderID       string `json:"sender_id"`
+	SenderNickname string `json:"sender_nickname"`
 }
 
 // ==================== 文件相关 ====================
@@ -162,16 +182,33 @@ type FileTransferProgress struct {
 
 // MemberDTO 成员数据传输对象
 type MemberDTO struct {
-	ID         string            `json:"id"`
-	Nickname   string            `json:"nickname"`
-	Avatar     string            `json:"avatar"`
-	Role       models.MemberRole `json:"role"`
-	Status     models.UserStatus `json:"status"`
-	IsOnline   bool              `json:"is_online"`
-	JoinTime   int64             `json:"join_time"`    // Unix timestamp
-	LastSeenAt int64             `json:"last_seen_at"` // Unix timestamp
-	IsMuted    bool              `json:"is_muted"`
-	IsBanned   bool              `json:"is_banned"`
+	ID               string            `json:"id"`
+	Nickname         string            `json:"nickname"`
+	Avatar           string            `json:"avatar"`
+	Role             models.MemberRole `json:"role"`
+	Status           models.UserStatus `json:"status"`
+	IsOnline         bool              `json:"is_online"`
+	JoinTime         int64             `json:"join_time"`    // Unix timestamp
+	LastSeenAt       int64             `json:"last_seen_at"` // Unix timestamp
+	IsMuted          bool              `json:"is_muted"`
+	IsBanned         bool              `json:"is_banned"`
+	Email            string            `json:"email,omitempty"`         // 邮箱（从Metadata提取）
+	Bio              string            `json:"bio,omitempty"`           // 个人简介（从Metadata提取）
+	Skills           []string          `json:"skills,omitempty"`        // 技能标签（仅类别名，向后兼容）
+	SkillDetails     []SkillDetail     `json:"skill_details,omitempty"` // 技能详情（包含等级与经验）
+	SolvedChallenges int               `json:"solved_challenges"`       // 已解决题目数
+	TotalPoints      int               `json:"total_points"`            // 总积分
+	Rank             int               `json:"rank,omitempty"`          // 排名
+	MessageCount     int               `json:"message_count"`           // 消息数
+	FilesShared      int               `json:"files_shared"`            // 共享文件数
+	OnlineTime       int64             `json:"online_time"`             // 在线时长（秒）
+}
+
+// SkillDetail 技能详情（用于DTO与Profile传输）
+type SkillDetail struct {
+	Category   string `json:"category"`   // Web/Pwn/Reverse/Crypto/Misc
+	Level      int    `json:"level"`      // 1-5
+	Experience int    `json:"experience"` // 题目数量/经验
 }
 
 // UpdateMemberRequest 更新成员请求
@@ -204,7 +241,7 @@ type ChallengeDTO struct {
 	Category     string    `json:"category"`
 	Difficulty   string    `json:"difficulty"`
 	Points       int       `json:"points"`
-	Flags        []string  `json:"-"` // 不返回给前端
+	Flag         string    `json:"flag"`
 	IsSolved     bool      `json:"is_solved"`
 	SolvedBy     []string  `json:"solved_by"`
 	Hints        []HintDTO `json:"hints"`
@@ -234,22 +271,22 @@ type SubChannelDTO struct {
 
 // CreateChallengeRequest 创建题目请求
 type CreateChallengeRequest struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Category    string   `json:"category"`
-	Difficulty  string   `json:"difficulty"`
-	Points      int      `json:"points"`
-	Flags       []string `json:"flags"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Category    string `json:"category"`
+	Difficulty  string `json:"difficulty"`
+	Points      int    `json:"points"`
+	Flag        string `json:"flag"`
 }
 
 // UpdateChallengeRequest 更新题目请求
 type UpdateChallengeRequest struct {
-	Title       *string  `json:"title,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	Category    *string  `json:"category,omitempty"`
-	Difficulty  *string  `json:"difficulty,omitempty"`
-	Points      *int     `json:"points,omitempty"`
-	Flags       []string `json:"flags,omitempty"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Category    *string `json:"category,omitempty"`
+	Difficulty  *string `json:"difficulty,omitempty"`
+	Points      *int    `json:"points,omitempty"`
+	Flag        *string `json:"flag,omitempty"`
 }
 
 // SubmitFlagRequest 提交flag请求
@@ -258,12 +295,11 @@ type SubmitFlagRequest struct {
 	Flag        string `json:"flag"`
 }
 
-// SubmitFlagResponse 提交flag响应
+// SubmitFlagResponse 提交flag响应（协作平台：不验证正确性）
 type SubmitFlagResponse struct {
-	Success   bool   `json:"success"`
-	IsCorrect bool   `json:"is_correct"`
-	Message   string `json:"message"`
-	Points    int    `json:"points,omitempty"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Points  int    `json:"points,omitempty"` // 可选：用于贡献度统计
 }
 
 // UpdateProgressRequest 更新进度请求
@@ -322,6 +358,10 @@ type ConnectionTestResult struct {
 type UserProfile struct {
 	Nickname      string               `json:"nickname"`
 	Avatar        string               `json:"avatar"`
+	Email         string               `json:"email"`
+	Bio           string               `json:"bio"`
+	Skills        []string             `json:"skills"`
+	SkillDetails  []SkillDetail        `json:"skill_details,omitempty"`
 	Status        models.UserStatus    `json:"status"`
 	CustomStatus  string               `json:"custom_status"`
 	Theme         string               `json:"theme"`
@@ -391,12 +431,14 @@ const (
 	EventFileDownloadProgress  = "file:download:progress"
 	EventFileDownloadCompleted = "file:download:completed"
 	EventFileDownloadFailed    = "file:download:failed"
+	EventFileDeleted           = "file:deleted"
 
 	// 题目事件
 	EventChallengeCreated  = "challenge:created"
 	EventChallengeUpdated  = "challenge:updated"
 	EventChallengeSolved   = "challenge:solved"
 	EventChallengeAssigned = "challenge:assigned"
+	EventChallengeProgress = "challenge:progress"
 
 	// 系统事件
 	EventError   = "error"

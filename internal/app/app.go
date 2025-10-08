@@ -7,6 +7,7 @@ import (
 
 	"crosswire/internal/client"
 	"crosswire/internal/events"
+	"crosswire/internal/models"
 	"crosswire/internal/server"
 	"crosswire/internal/storage"
 	"crosswire/internal/utils"
@@ -61,12 +62,38 @@ func NewApp(db *storage.Database) *App {
 
 // loadUserProfile 加载用户配置
 func loadUserProfile(db *storage.Database) *UserProfile {
-	// TODO: 从数据库加载用户配置
-	// 暂时返回默认配置
+	// 从 user.db 加载用户配置（若不存在，返回默认配置）
+	if db == nil || db.GetUserDB() == nil {
+		return getDefaultUserProfile()
+	}
+
+	var up models.UserProfile
+	if err := db.GetUserDB().First(&up).Error; err != nil {
+		// 未初始化，返回默认配置
+		return getDefaultUserProfile()
+	}
+
+	// 映射到 App 层 Profile
+	return &UserProfile{
+		Nickname: up.Nickname,
+		Avatar:   up.Avatar,
+		Status:   models.StatusOnline,
+		Theme:    up.Theme,
+		Language: up.Language,
+		Notifications: NotificationSettings{
+			Enabled:     true,
+			Sound:       true,
+			Desktop:     true,
+			MentionOnly: false,
+		},
+	}
+}
+
+func getDefaultUserProfile() *UserProfile {
 	return &UserProfile{
 		Nickname: "User",
 		Avatar:   "",
-		Status:   "online",
+		Status:   models.StatusOnline,
 		Theme:    "light",
 		Language: "zh-CN",
 		Notifications: NotificationSettings{
@@ -124,8 +151,26 @@ func (a *App) Shutdown(ctx context.Context) {
 		a.client = nil
 	}
 
-	// 保存用户配置
-	// TODO: 将用户配置保存到数据库
+	// 保存用户配置（如果存在）
+	if a.userProfile != nil && a.db != nil && a.db.GetUserDB() != nil {
+		// 读取或创建第一条用户配置记录
+		var up models.UserProfile
+		if err := a.db.GetUserDB().First(&up).Error; err != nil {
+			// 创建默认记录
+			up.ID = "default"
+			up.Nickname = a.userProfile.Nickname
+			up.Avatar = a.userProfile.Avatar
+			up.Theme = a.userProfile.Theme
+			up.Language = a.userProfile.Language
+			_ = a.db.GetUserDB().Create(&up).Error
+		} else {
+			up.Nickname = a.userProfile.Nickname
+			up.Avatar = a.userProfile.Avatar
+			up.Theme = a.userProfile.Theme
+			up.Language = a.userProfile.Language
+			_ = a.db.GetUserDB().Save(&up).Error
+		}
+	}
 
 	a.mode = ModeIdle
 	a.isRunning = false

@@ -88,8 +88,9 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { InfoCircleOutlined } from '@ant-design/icons-vue'
+import { getMembers } from '@/api/app'
 
 const props = defineProps({
   open: {
@@ -109,8 +110,44 @@ const visible = computed({
   set: (value) => emit('update:open', value)
 })
 
-// 成员列表（从父组件或后端加载）
+// 成员列表（从后端加载）
 const members = ref([])
+const loading = ref(false)
+
+// 加载成员列表
+const loadMembers = async () => {
+  loading.value = true
+  try {
+    const memberList = await getMembers()
+    console.log('Loaded members:', memberList)
+    if (Array.isArray(memberList)) {
+      members.value = memberList.map(m => ({
+        id: m.id || m.ID,
+        name: m.nickname || m.Nickname || 'Unknown',
+        role: m.role || m.Role || 'member',
+        skills: [] // TODO: 如果后端支持技能标签，在这里解析
+      }))
+    }
+  } catch (error) {
+    console.error('Failed to load members:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 监听弹窗打开时加载数据
+watch(() => props.open, (newVal) => {
+  if (newVal) {
+    loadMembers()
+  }
+})
+
+// 组件挂载时加载数据
+onMounted(() => {
+  if (props.open) {
+    loadMembers()
+  }
+})
 
 const memberList = computed(() => 
   members.value.map(m => ({

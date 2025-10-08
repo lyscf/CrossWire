@@ -386,7 +386,7 @@ func (s *Server) CreateChallenge(config *ChallengeConfig) (*Challenge, error) {
         Difficulty:  config.Difficulty,
         Points:      config.Points,
         Description: config.Description,
-        FlagHash:    hashFlag(config.Flag),  // 不存储明文
+        Flag:        config.Flag,  // 明文存储，对所有人可见
         Status:      "open",
         CreatedBy:   member.ID,
         CreatedAt:   time.Now(),
@@ -1041,7 +1041,7 @@ type Challenge struct {
     Points      int       `json:"points" db:"points"`
     Description string    `json:"description" db:"description"`
     FlagFormat  string    `json:"flag_format" db:"flag_format"`
-    FlagHash    string    `json:"-" db:"flag_hash"`  // 不返回给前端
+    Flag        string    `json:"flag" db:"flag"`
     URL         string    `json:"url" db:"url"`
     Attachments []string  `json:"attachments" db:"attachments"`
     Tags        []string  `json:"tags" db:"tags"`

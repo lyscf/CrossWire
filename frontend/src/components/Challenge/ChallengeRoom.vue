@@ -202,7 +202,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ArrowLeftOutlined,
@@ -216,6 +216,7 @@ import {
 } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
 import ChallengeSubmit from './ChallengeSubmit.vue'
+import { getMessages, getMembers, sendMessage as sendMessageAPI } from '@/api/app'
 
 const props = defineProps({
   challenge: {
@@ -237,6 +238,69 @@ const roomMessages = ref([])
 
 // 参与成员（从后端加载）
 const roomMembers = ref([])
+const loading = ref(false)
+
+// 加载子频道消息
+const loadRoomMessages = async () => {
+  if (!props.challenge?.sub_channel_id) {
+    console.warn('No sub_channel_id available for challenge:', props.challenge)
+    return
+  }
+  loading.value = true
+  try {
+    const messages = await getMessages(props.challenge.sub_channel_id, 100, 0)
+    console.log('Loaded room messages:', messages)
+    if (Array.isArray(messages)) {
+      roomMessages.value = messages.map(m => ({
+        id: m.id || m.ID,
+        sender: m.sender_name || m.SenderName || 'Unknown',
+        content: m.content || m.Content || '',
+        timestamp: m.timestamp ? new Date(m.timestamp * 1000) : new Date(),
+        type: m.message_type || m.MessageType || 'text'
+      }))
+    }
+  } catch (error) {
+    console.error('Failed to load room messages:', error)
+    message.warning('加载消息失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 加载成员列表
+const loadMembers = async () => {
+  loading.value = true
+  try {
+    const members = await getMembers()
+    console.log('Loaded members:', members)
+    if (Array.isArray(members)) {
+      roomMembers.value = members.map(m => ({
+        id: m.id || m.ID,
+        name: m.nickname || m.Nickname || 'Unknown',
+        online: m.status === 'online',
+        progress: 0 // TODO: 从题目进度API获取
+      }))
+    }
+  } catch (error) {
+    console.error('Failed to load members:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 组件挂载时加载数据
+onMounted(() => {
+  loadRoomMessages()
+  loadMembers()
+})
+
+// 当题目变化时重新加载数据
+watch(() => props.challenge?.id, () => {
+  if (props.challenge?.id) {
+    loadRoomMessages()
+    loadMembers()
+  }
+})
 
 const getCategoryColor = (category) => {
   const colors = {

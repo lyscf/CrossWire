@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -282,15 +283,8 @@ func (fm *FileManager) executeUpload(task *FileUploadTask, file *os.File) {
 		// 计算分块哈希
 		chunkHash := sha256.Sum256(chunkData)
 
-		// 加密分块
-		encrypted, err := fm.client.crypto.EncryptMessage(chunkData)
-		if err != nil {
-			fm.pauseUpload(task, fmt.Errorf("failed to encrypt chunk %d: %w", chunkIndex, err))
-			return
-		}
-
 		// 发送分块
-		if err := fm.sendFileChunk(task, chunkIndex, encrypted, hex.EncodeToString(chunkHash[:])); err != nil {
+		if err := fm.sendFileChunk(task, chunkIndex, chunkData, hex.EncodeToString(chunkHash[:])); err != nil {
 			fm.pauseUpload(task, fmt.Errorf("failed to send chunk %d: %w", chunkIndex, err))
 			return
 		}
@@ -367,7 +361,7 @@ func (fm *FileManager) sendFileChunk(task *FileUploadTask, chunkIndex int, data 
 		"file_id":      task.ID,
 		"chunk_index":  chunkIndex,
 		"total_chunks": task.TotalChunks,
-		"data":         data,
+		"data":         base64.StdEncoding.EncodeToString(data),
 		"checksum":     checksum,
 		"timestamp":    time.Now().Unix(),
 	}
@@ -569,9 +563,10 @@ func (fm *FileManager) executeDownload(task *FileDownloadTask) {
 // requestFileData 请求文件数据
 func (fm *FileManager) requestFileData(task *FileDownloadTask) error {
 	request := map[string]interface{}{
-		"type":      "file.request",
-		"file_id":   task.FileID,
-		"timestamp": time.Now().Unix(),
+		"type":         "file.request",
+		"file_id":      task.FileID,
+		"requester_id": fm.client.memberID,
+		"timestamp":    time.Now().Unix(),
 	}
 
 	payload, err := json.Marshal(request)
@@ -674,7 +669,7 @@ func (fm *FileManager) completeDownload(task *FileDownloadTask) {
 
 	// 发布完成事件
 	fileRecord, _ := fm.client.fileRepo.GetByID(task.FileID)
-	fm.client.eventBus.Publish(events.EventFileDownloaded, events.FileEvent{
+	fm.client.eventBus.Publish(events.EventFileDownloadCompleted, events.FileEvent{
 		File:       fileRecord,
 		ChannelID:  fm.client.config.ChannelID,
 		UploaderID: "",
@@ -725,6 +720,18 @@ func (fm *FileManager) GetDownloadTask(taskID string) (*FileDownloadTask, bool) 
 	defer fm.downloadsMutex.RUnlock()
 	task, ok := fm.downloads[taskID]
 	return task, ok
+}
+
+// GetDownloadTaskByFileID 通过文件ID获取下载任务
+func (fm *FileManager) GetDownloadTaskByFileID(fileID string) (*FileDownloadTask, bool) {
+	fm.downloadsMutex.RLock()
+	defer fm.downloadsMutex.RUnlock()
+	for _, task := range fm.downloads {
+		if task != nil && task.FileID == fileID {
+			return task, true
+		}
+	}
+	return nil, false
 }
 
 // GetStats 获取统计信息

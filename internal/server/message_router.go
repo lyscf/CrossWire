@@ -2,6 +2,8 @@ package server
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -137,7 +139,7 @@ func (mr *MessageRouter) processMessageTask(task *MessageTask) {
 		return
 	}
 
-	if member.PublicKey == nil || len(member.PublicKey) == 0 {
+	if len(member.PublicKey) == 0 {
 		mr.server.logger.Warn("[MessageRouter] Member has no public key: %s", signedMsg.SenderID)
 		mr.server.stats.mutex.Lock()
 		mr.server.stats.RejectedMessages++
@@ -204,8 +206,10 @@ func (mr *MessageRouter) processMessageTask(task *MessageTask) {
 		return
 	}
 
-	// 8. 补充消息元数据
-	msg.ChannelID = mr.server.config.ChannelID
+	// 8. 补充消息元数据：尊重客户端传入的 ChannelID（用于子频道），为空时回落到主频道
+	if msg.ChannelID == "" {
+		msg.ChannelID = mr.server.config.ChannelID
+	}
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now()
 	}
@@ -216,13 +220,18 @@ func (mr *MessageRouter) processMessageTask(task *MessageTask) {
 		// 不阻止广播
 	}
 
-	// 10. 广播消息（带服务器签名）
+	// 10. 类型特定处理
+	if msg.Type == models.MessageTypeReaction {
+		mr.handleReaction(&msg)
+	}
+
+	// 11. 广播消息（带服务器签名）
 	if err := mr.server.broadcastManager.Broadcast(&msg); err != nil {
 		mr.server.logger.Error("[MessageRouter] Failed to broadcast message: %v", err)
 		return
 	}
 
-	// 11. 发布事件
+	// 12. 发布事件
 	mr.server.eventBus.Publish(events.EventMessageReceived, events.NewMessageReceivedEvent(&msg, mr.server.config.ChannelID))
 
 	mr.server.logger.Debug("[MessageRouter] Signed message verified and broadcasted: %s from %s",
@@ -236,6 +245,41 @@ func (mr *MessageRouter) persistMessage(msg *models.Message) error {
 	}
 
 	return nil
+}
+
+// handleReaction 处理消息反应
+func (mr *MessageRouter) handleReaction(msg *models.Message) {
+	// 期望内容: { message_id, emoji, action }
+	messageID, _ := msg.Content["message_id"].(string)
+	emoji, _ := msg.Content["emoji"].(string)
+	action, _ := msg.Content["action"].(string)
+	if messageID == "" || emoji == "" || action == "" {
+		mr.server.logger.Warn("[MessageRouter] Invalid reaction payload")
+		return
+	}
+
+	switch action {
+	case "add":
+		reaction := &models.MessageReaction{
+			MessageID: messageID,
+			UserID:    msg.SenderID,
+			Emoji:     emoji,
+			CreatedAt: time.Now(),
+		}
+		if err := mr.server.messageRepo.AddReaction(reaction); err != nil {
+			mr.server.logger.Error("[MessageRouter] Failed to add reaction: %v", err)
+		}
+		mr.server.eventBus.Publish(events.EventReactionAdded, events.NewReactionEvent(messageID, msg.SenderID, emoji, "add"))
+	case "remove":
+		if err := mr.server.messageRepo.RemoveReaction(messageID, msg.SenderID, emoji); err != nil {
+			mr.server.logger.Error("[MessageRouter] Failed to remove reaction: %v", err)
+		}
+		mr.server.eventBus.Publish(events.EventReactionRemoved, events.NewReactionEvent(messageID, msg.SenderID, emoji, "remove"))
+	default:
+		mr.server.logger.Warn("[MessageRouter] Unknown reaction action: %s", action)
+	}
+
+	// 可选：发布事件（未来可在events增加具体reaction事件类型）
 }
 
 // HandleFileUpload 处理文件上传
@@ -293,8 +337,15 @@ func (mr *MessageRouter) handleFileMetadata(msg *models.Message) {
 	if mimeType, ok := msg.Content["mime_type"].(string); ok {
 		fileContent.MimeType = mimeType
 	}
-	if sha256, ok := msg.Content["sha256"].(string); ok {
-		fileContent.SHA256 = sha256
+	if sha256Hex, ok := msg.Content["sha256"].(string); ok {
+		fileContent.SHA256 = sha256Hex
+	}
+	if chunkSize, ok := msg.Content["chunk_size"].(float64); ok {
+		// JSON 数字解码为 float64
+		msg.Content["chunk_size"] = int(chunkSize)
+	}
+	if totalChunks, ok := msg.Content["total_chunks"].(float64); ok {
+		msg.Content["total_chunks"] = int(totalChunks)
 	}
 
 	// 2. 创建或更新文件记录
@@ -311,6 +362,15 @@ func (mr *MessageRouter) handleFileMetadata(msg *models.Message) {
 		Encrypted:   true,
 		UploadedAt:  time.Now(),
 	}
+
+	// 可选字段：分块信息
+	if v, ok := msg.Content["chunk_size"].(int); ok {
+		file.ChunkSize = v
+	}
+	if v, ok := msg.Content["total_chunks"].(int); ok {
+		file.TotalChunks = v
+	}
+	file.UploadStatus = models.UploadStatusUploading
 
 	// 3. 保存文件记录
 	if err := mr.server.fileRepo.Create(file); err != nil {
@@ -394,13 +454,15 @@ func (mr *MessageRouter) HandleFileChunk(transportMsg *transport.Message) {
 		return
 	}
 
-	// 5. 更新文件上传进度
+	// 5. 更新文件（累积数据）与上传进度
 	file, err := mr.server.fileRepo.GetByID(chunkData.FileID)
 	if err != nil {
 		mr.server.logger.Error("[MessageRouter] Failed to get file: %v", err)
 		return
 	}
 
+	// 累加数据（StorageInline）
+	file.Data = append(file.Data, chunkData.Data...)
 	file.UploadedChunks++
 	if err := mr.server.fileRepo.Update(file); err != nil {
 		mr.server.logger.Error("[MessageRouter] Failed to update file progress: %v", err)
@@ -441,8 +503,13 @@ func (mr *MessageRouter) handleFileUploadComplete(file *models.File) {
 
 	// 2. 验证完整性（如果有SHA256）
 	if file.SHA256 != "" {
-		// TODO: 重新计算完整文件的SHA256并验证
-		mr.server.logger.Debug("[MessageRouter] File SHA256 verification: %s", file.SHA256)
+		sum := sha256.Sum256(file.Data)
+		actual := fmt.Sprintf("%x", sum[:])
+		if actual != file.SHA256 {
+			mr.server.logger.Error("[MessageRouter] File SHA256 mismatch: expect=%s actual=%s", file.SHA256, actual)
+		} else {
+			mr.server.logger.Debug("[MessageRouter] File SHA256 verified: %s", actual)
+		}
 	}
 
 	// 3. 发布完成事件
@@ -521,11 +588,13 @@ func (mr *MessageRouter) sendFileMetadataToMember(memberID string, file *models.
 
 	// 设置文件内容（直接构造map）
 	msg.Content = models.MessageContent{
-		"file_id":   file.ID,
-		"filename":  file.Filename,
-		"size":      file.Size,
-		"mime_type": file.MimeType,
-		"sha256":    file.SHA256,
+		"file_id":      file.ID,
+		"filename":     file.Filename,
+		"size":         file.Size,
+		"mime_type":    file.MimeType,
+		"sha256":       file.SHA256,
+		"chunk_size":   file.ChunkSize,
+		"total_chunks": file.TotalChunks,
 	}
 
 	// 广播（客户端会根据需要接收）
@@ -534,16 +603,61 @@ func (mr *MessageRouter) sendFileMetadataToMember(memberID string, file *models.
 
 // sendFileChunkToMember 发送文件分块给指定成员
 func (mr *MessageRouter) sendFileChunkToMember(memberID string, file *models.File, chunk *models.FileChunk) error {
-	// TODO: 实现分块数据的实际发送
-	// 这需要从存储中读取分块数据并发送
+	// 从内存数据切片中提取该分块
+	if file.ChunkSize <= 0 {
+		mr.server.logger.Warn("[MessageRouter] Invalid chunk size for file %s", file.ID)
+		return nil
+	}
+	offset := chunk.ChunkIndex * file.ChunkSize
+	if offset < 0 || offset >= len(file.Data) {
+		mr.server.logger.Warn("[MessageRouter] Chunk offset out of range: %d", chunk.ChunkIndex)
+		return nil
+	}
+	end := offset + file.ChunkSize
+	if end > len(file.Data) {
+		end = len(file.Data)
+	}
+	bytes := file.Data[offset:end]
+
+	// base64 编码
+	b64 := base64.StdEncoding.EncodeToString(bytes)
+
+	payload := map[string]interface{}{
+		"type":         "file.chunk",
+		"file_id":      file.ID,
+		"chunk_index":  chunk.ChunkIndex,
+		"total_chunks": file.TotalChunks,
+		"checksum":     chunk.Checksum,
+		"data":         b64,
+		"timestamp":    time.Now().Unix(),
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	enc, err := mr.server.crypto.EncryptMessage(data)
+	if err != nil {
+		return err
+	}
+	tmsg := &transport.Message{
+		Type:      transport.MessageTypeControl,
+		SenderID:  "server",
+		Payload:   enc,
+		Timestamp: time.Now(),
+	}
 	mr.server.logger.Debug("[MessageRouter] Sending chunk %d to member %s", chunk.ChunkIndex, memberID)
-	return nil
+	return mr.server.transport.SendMessage(tmsg)
 }
 
 // verifyChunkChecksum 验证分块校验和
 func (mr *MessageRouter) verifyChunkChecksum(data []byte, checksum string) bool {
-	// 简单的校验实现，实际应该根据具体的校验算法
-	return true // TODO: 实现实际的校验逻辑
+	if checksum == "" {
+		return true
+	}
+	sum := sha256.Sum256(data)
+	actual := fmt.Sprintf("%x", sum[:])
+	return actual == checksum
 }
 
 // AddOfflineMessage 添加离线消息

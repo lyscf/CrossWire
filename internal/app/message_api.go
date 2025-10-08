@@ -23,11 +23,30 @@ func (a *App) SendMessage(req SendMessageRequest) Response {
 		return NewErrorResponse("invalid_request", "消息内容不能为空", "")
 	}
 
-	// 客户端发送（服务端接收广播），当前仅支持客户端直接发送
+	// 确定目标频道ID（如果传入则优先使用）
+	targetChannelID := ""
+	if req.ChannelID != nil && *req.ChannelID != "" {
+		targetChannelID = *req.ChannelID
+	} else {
+		if mode == ModeServer && a.server != nil {
+			ch, _ := a.server.GetChannel()
+			if ch != nil {
+				targetChannelID = ch.ID
+			}
+		} else if mode == ModeClient && cli != nil {
+			targetChannelID = cli.GetChannelID()
+		}
+	}
+
+	// 客户端发送（服务端接收广播）
 	var err error
 	if mode == ModeClient && cli != nil {
-		err = cli.SendMessage(req.Content, req.Type)
-	} else if mode == ModeServer && a.server != nil {
+		if targetChannelID == "" {
+			err = cli.SendMessage(req.Content, req.Type)
+		} else {
+			err = cli.SendMessageToChannel(req.Content, req.Type, targetChannelID)
+		}
+	} else if mode == ModeServer {
 		// 服务端暂不直接发送用户消息
 		return NewErrorResponse("invalid_mode", "服务端不支持直接发送", "")
 	} else {
@@ -113,6 +132,33 @@ func (a *App) GetMessages(limit, offset int) Response {
 	return NewSuccessResponse(messageDTOs)
 }
 
+// GetMessagesByChannel 获取指定频道的消息列表
+func (a *App) GetMessagesByChannel(channelID string, limit, offset int) Response {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	if channelID == "" {
+		return NewErrorResponse("invalid_request", "channel_id 不能为空", "")
+	}
+
+	messages, err := a.db.MessageRepo().GetByChannelID(channelID, limit, offset)
+	if err != nil {
+		return NewErrorResponse("db_error", "获取消息失败", err.Error())
+	}
+
+	messageDTOs := make([]*MessageDTO, 0, len(messages))
+	for _, msg := range messages {
+		dto := a.messageToDTO(msg)
+		messageDTOs = append(messageDTOs, dto)
+	}
+
+	return NewSuccessResponse(messageDTOs)
+}
+
 // GetMessage 获取单条消息
 func (a *App) GetMessage(messageID string) Response {
 	a.mu.RLock()
@@ -189,7 +235,7 @@ func (a *App) DeleteMessage(messageID string) Response {
 }
 
 // PinMessage 置顶消息（仅服务端）
-func (a *App) PinMessage(messageID string) Response {
+func (a *App) PinMessage(req PinMessageRequest) Response {
 	a.mu.RLock()
 	mode := a.mode
 	a.mu.RUnlock()
@@ -198,8 +244,15 @@ func (a *App) PinMessage(messageID string) Response {
 		return NewErrorResponse("permission_denied", "仅服务端可置顶消息", "")
 	}
 
+	if req.MessageID == "" {
+		return NewErrorResponse("invalid_request", "message_id 不能为空", "")
+	}
+
 	ch, _ := a.server.GetChannel()
-	if err := a.db.ChannelRepo().PinMessage(ch.ID, messageID, "server", ""); err != nil {
+	if ch == nil {
+		return NewErrorResponse("no_channel", "未初始化频道", "")
+	}
+	if err := a.db.ChannelRepo().PinMessage(ch.ID, req.MessageID, "server", req.Reason); err != nil {
 		return NewErrorResponse("pin_error", "置顶消息失败", err.Error())
 	}
 
@@ -228,6 +281,133 @@ func (a *App) UnpinMessage(messageID string) Response {
 	})
 }
 
+// GetPinnedMessages 获取置顶消息列表（当前频道）
+func (a *App) GetPinnedMessages() Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	var channelID string
+	if mode == ModeServer && srv != nil {
+		ch, _ := srv.GetChannel()
+		if ch == nil {
+			return NewErrorResponse("no_channel", "未初始化频道", "")
+		}
+		channelID = ch.ID
+	} else if mode == ModeClient && cli != nil {
+		channelID = cli.GetChannelID()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	// 获取带内容的置顶消息
+	rows, err := a.db.ChannelRepo().GetPinnedMessagesWithContent(channelID)
+	if err != nil {
+		return NewErrorResponse("query_error", "查询置顶消息失败", err.Error())
+	}
+
+	// 转换为 DTO
+	dtos := make([]*PinnedMessageDTO, 0, len(rows))
+	for _, item := range rows {
+		dto := &PinnedMessageDTO{
+			ID:             item.ID,
+			ChannelID:      item.ChannelID,
+			MessageID:      item.MessageID,
+			PinnedBy:       item.PinnedBy,
+			Reason:         item.Reason,
+			PinnedAt:       item.PinnedAt.Unix(),
+			DisplayOrder:   item.DisplayOrder,
+			ContentText:    item.ContentText,
+			SenderID:       item.SenderID,
+			SenderNickname: item.SenderNickname,
+		}
+		dtos = append(dtos, dto)
+	}
+
+	return NewSuccessResponse(dtos)
+}
+
+// SetTypingStatus 设置当前用户的正在输入状态（5秒窗口）
+func (a *App) SetTypingStatus() Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	var channelID string
+	var userID string
+
+	if mode == ModeServer && srv != nil {
+		ch, _ := srv.GetChannel()
+		if ch == nil {
+			return NewErrorResponse("no_channel", "未初始化频道", "")
+		}
+		channelID = ch.ID
+		userID = "server"
+	} else if mode == ModeClient && cli != nil {
+		channelID = cli.GetChannelID()
+		userID = cli.GetMemberID()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	if channelID == "" || userID == "" {
+		return NewErrorResponse("invalid_request", "缺少必要的身份信息", "")
+	}
+
+	if err := a.db.MessageRepo().SetTypingStatus(channelID, userID); err != nil {
+		return NewErrorResponse("db_error", "设置输入状态失败", err.Error())
+	}
+
+	return NewSuccessResponse(map[string]interface{}{
+		"message": "输入状态已更新",
+	})
+}
+
+// GetTypingUsers 获取最近5秒内正在输入的用户
+func (a *App) GetTypingUsers() Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	var channelID string
+	if mode == ModeServer && srv != nil {
+		ch, _ := srv.GetChannel()
+		if ch == nil {
+			return NewErrorResponse("no_channel", "未初始化频道", "")
+		}
+		channelID = ch.ID
+	} else if mode == ModeClient && cli != nil {
+		channelID = cli.GetChannelID()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	list, err := a.db.MessageRepo().GetTypingUsers(channelID)
+	if err != nil {
+		return NewErrorResponse("db_error", "获取输入用户失败", err.Error())
+	}
+
+	return NewSuccessResponse(list)
+}
+
 // ReactToMessage 对消息添加反应
 func (a *App) ReactToMessage(messageID, emoji string) Response {
 	a.mu.RLock()
@@ -245,16 +425,11 @@ func (a *App) ReactToMessage(messageID, emoji string) Response {
 		return NewErrorResponse("invalid_request", "emoji不能为空", "")
 	}
 
-	// 添加反应
-	var err error
-	if mode == ModeClient && cli != nil {
-		// TODO: 客户端本地记录/发送反应
-		err = nil
-	} else {
+	if mode != ModeClient || cli == nil {
 		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
 	}
 
-	if err != nil {
+	if err := cli.SendReaction(messageID, emoji); err != nil {
 		return NewErrorResponse("reaction_error", "添加反应失败", err.Error())
 	}
 
@@ -275,16 +450,11 @@ func (a *App) RemoveReaction(messageID, emoji string) Response {
 		return NewErrorResponse("not_running", "未连接到频道", "")
 	}
 
-	// 移除反应
-	var err error
-	if mode == ModeClient && cli != nil {
-		// TODO: 客户端本地记录/发送反应移除
-		err = nil
-	} else {
+	if mode != ModeClient || cli == nil {
 		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
 	}
 
-	if err != nil {
+	if err := cli.RemoveReactionNetwork(messageID, emoji); err != nil {
 		return NewErrorResponse("reaction_error", "移除反应失败", err.Error())
 	}
 
@@ -306,9 +476,32 @@ func (a *App) messageToDTO(msg *models.Message) *MessageDTO {
 		}
 	}
 
-	// 转换reactions（简化版）
+	// 加载并聚合 reactions
 	reactions := make([]MessageReaction, 0)
-	// TODO: 从数据库加载reactions
+	if a.db != nil {
+		dbReactions, err := a.db.MessageRepo().GetReactions(msg.ID)
+		if err == nil && len(dbReactions) > 0 {
+			agg := make(map[string]*MessageReaction)
+			for _, r := range dbReactions {
+				if r == nil {
+					continue
+				}
+				if entry, ok := agg[r.Emoji]; ok {
+					entry.Count++
+					entry.UserIDs = append(entry.UserIDs, r.UserID)
+				} else {
+					agg[r.Emoji] = &MessageReaction{
+						Emoji:   r.Emoji,
+						UserIDs: []string{r.UserID},
+						Count:   1,
+					}
+				}
+			}
+			for _, v := range agg {
+				reactions = append(reactions, *v)
+			}
+		}
+	}
 
 	return &MessageDTO{
 		ID:         msg.ID,
@@ -318,7 +511,6 @@ func (a *App) messageToDTO(msg *models.Message) *MessageDTO {
 		Type:       msg.Type,
 		Content:    msg.Content,
 		Timestamp:  msg.Timestamp.Unix(),
-		IsEdited:   msg.IsEdited,
 		IsDeleted:  msg.IsDeleted,
 		IsPinned:   msg.IsPinned,
 		ReplyToID:  msg.ReplyToID,

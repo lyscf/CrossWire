@@ -762,27 +762,7 @@ type SearchQuery struct {
 }
 ```
 
-**全文搜索（SQLite FTS5）：**
 
-```sql
--- 创建全文索引
-CREATE VIRTUAL TABLE messages_fts USING fts5(
-    content,
-    sender_nickname,
-    tags,
-    content=messages,
-    content_rowid=id
-);
-
--- 搜索示例
-SELECT m.* FROM messages m
-JOIN messages_fts fts ON m.id = fts.rowid
-WHERE messages_fts MATCH 'sql AND injection'
-AND m.channel_id = ?
-AND m.timestamp BETWEEN ? AND ?
-ORDER BY rank
-LIMIT 50;
-```
 
 ---
 

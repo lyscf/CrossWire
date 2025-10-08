@@ -72,6 +72,7 @@
 <script setup>
 import { ref, h, computed } from 'vue'
 import { message } from 'ant-design-vue'
+import { selectFile, uploadFile } from '@/api/app'
 import {
   PaperClipOutlined,
   CodeOutlined,
@@ -254,11 +255,25 @@ const insertMention = () => {
   }, 0)
 }
 
-const handleFileUpload = (file) => {
-  console.log('Uploading file:', file.name)
-  message.info(`正在上传文件: ${file.name}`)
-  // TODO: 实现文件上传
-  return false // 阻止自动上传
+const handleFileUpload = async () => {
+  try {
+    // 选择文件（使用原生对话框，兼容桌面环境）
+    const res = await selectFile('选择要发送的文件', '所有文件 (*.*)')
+    const filePath = res?.path
+    if (!filePath) {
+      return false
+    }
+
+    message.loading({ content: '正在上传文件...', key: 'msg-upload', duration: 0 })
+
+    // 通过后端开始上传（分片由后端客户端处理）
+    const data = await uploadFile({ file_path: filePath })
+    const filename = data?.filename || filePath.split(/[\\/]/).pop()
+    message.success({ content: `已开始上传: ${filename}`, key: 'msg-upload' })
+  } catch (err) {
+    message.error({ content: `上传失败: ${err.message || err}`, key: 'msg-upload' })
+  }
+  return false // 阻止 Ant Upload 的默认上传
 }
 </script>
 

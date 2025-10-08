@@ -2,7 +2,7 @@ package events
 
 import (
 	"time"
-	
+
 	"crosswire/internal/models"
 )
 
@@ -10,7 +10,7 @@ import (
 
 // MessageEvent 消息事件数据
 type MessageEvent struct {
-	Message  *models.Message
+	Message   *models.Message
 	ChannelID string
 	SenderID  string
 }
@@ -25,10 +25,10 @@ type MemberEvent struct {
 
 // FileEvent 文件事件数据
 type FileEvent struct {
-	File      *models.File
-	ChannelID string
+	File       *models.File
+	ChannelID  string
 	UploaderID string
-	Progress  int // 0-100
+	Progress   int // 0-100
 }
 
 // StatusEvent 状态变化事件数据
@@ -46,6 +46,14 @@ type TypingEvent struct {
 	IsTyping  bool
 }
 
+// ReactionEvent 消息反应事件数据
+type ReactionEvent struct {
+	MessageID string
+	UserID    string
+	Emoji     string
+	Action    string // add/remove
+}
+
 // ChannelEvent 频道事件数据
 type ChannelEvent struct {
 	Channel *models.Channel
@@ -55,7 +63,7 @@ type ChannelEvent struct {
 
 // SystemEvent 系统事件数据
 type SystemEvent struct {
-	Type    string      // "error", "connected", "disconnect", "reconnect"
+	Type    string // "error", "connected", "disconnect", "reconnect"
 	Message string
 	Code    int
 	Data    interface{}
@@ -75,7 +83,6 @@ type SubmissionEvent struct {
 	Submission  *models.ChallengeSubmission
 	ChallengeID string
 	UserID      string
-	IsCorrect   bool
 	Message     string
 }
 
@@ -188,7 +195,7 @@ func NewTypingEvent(memberID, channelID string, isTyping bool) *Event {
 	if !isTyping {
 		eventType = EventTypingStop
 	}
-	
+
 	return &Event{
 		Type: eventType,
 		Data: &TypingEvent{
@@ -198,6 +205,25 @@ func NewTypingEvent(memberID, channelID string, isTyping bool) *Event {
 		},
 		Timestamp: time.Now(),
 		Source:    "typing_manager",
+	}
+}
+
+// NewReactionEvent 创建消息反应事件
+func NewReactionEvent(messageID, userID, emoji, action string) *Event {
+	eventType := EventReactionAdded
+	if action == "remove" {
+		eventType = EventReactionRemoved
+	}
+	return &Event{
+		Type: eventType,
+		Data: &ReactionEvent{
+			MessageID: messageID,
+			UserID:    userID,
+			Emoji:     emoji,
+			Action:    action,
+		},
+		Timestamp: time.Now(),
+		Source:    "reaction_handler",
 	}
 }
 
@@ -254,11 +280,9 @@ func NewSubmissionEvent(submission *models.ChallengeSubmission, isCorrect bool, 
 			Submission:  submission,
 			ChallengeID: submission.ChallengeID,
 			UserID:      submission.MemberID,
-			IsCorrect:   isCorrect,
 			Message:     message,
 		},
 		Timestamp: time.Now(),
 		Source:    "challenge_manager",
 	}
 }
-

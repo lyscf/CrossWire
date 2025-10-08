@@ -49,19 +49,30 @@
           </a-form-item>
 
           <a-form-item label="技能标签">
-            <a-select
-              v-model:value="editData.skills"
-              mode="tags"
-              placeholder="选择或输入技能"
-              style="width: 100%"
-            >
-              <a-select-option value="Web">Web</a-select-option>
-              <a-select-option value="Pwn">Pwn</a-select-option>
-              <a-select-option value="Reverse">Reverse</a-select-option>
-              <a-select-option value="Crypto">Crypto</a-select-option>
-              <a-select-option value="Misc">Misc</a-select-option>
-              <a-select-option value="Forensics">Forensics</a-select-option>
-            </a-select>
+            <div v-for="(skill, index) in editData.skill_details" :key="index" class="skill-edit-item">
+              <a-select
+                v-model:value="skill.category"
+                placeholder="选择技能"
+                style="width: 120px"
+              >
+                <a-select-option value="Web">Web</a-select-option>
+                <a-select-option value="Pwn">Pwn</a-select-option>
+                <a-select-option value="Reverse">Reverse</a-select-option>
+                <a-select-option value="Crypto">Crypto</a-select-option>
+                <a-select-option value="Misc">Misc</a-select-option>
+                <a-select-option value="Forensics">Forensics</a-select-option>
+              </a-select>
+
+              <a-rate v-model:value="skill.level" :count="5" style="margin: 0 12px" />
+
+              <a-button type="text" danger size="small" @click="removeSkill(index)">
+                <DeleteOutlined />
+              </a-button>
+            </div>
+
+            <a-button type="dashed" block @click="addSkill" style="margin-top: 8px">
+              <PlusOutlined /> 添加技能
+            </a-button>
           </a-form-item>
 
           <a-form-item label="个人简介">
@@ -92,18 +103,15 @@
           <h4 class="section-title">
             <TagsOutlined /> 技能标签
           </h4>
-          <a-space wrap>
-            <a-tag
-              v-for="skill in user.skills"
-              :key="skill"
-              :color="getSkillColor(skill)"
-              size="large"
-            >
-              {{ skill }}
-            </a-tag>
-            <span v-if="user.skills.length === 0" class="empty-text">
-              暂无技能标签
-            </span>
+          <a-space wrap direction="vertical" :size="12">
+            <div v-for="skill in user.skill_details || []" :key="skill.category" class="skill-item">
+              <a-tag :color="getSkillColor(skill.category)" size="large" style="min-width: 80px">
+                {{ skill.category }}
+              </a-tag>
+              <a-rate :value="skill.level || 0" :count="5" disabled style="font-size: 14px; margin-left: 8px" />
+              <span v-if="skill.experience > 0" class="experience-text">{{ skill.experience }} 题</span>
+            </div>
+            <span v-if="(user.skill_details || []).length === 0" class="empty-text">暂无技能标签</span>
           </a-space>
         </div>
 
@@ -120,12 +128,12 @@
         <!-- 统计信息 -->
         <div class="profile-section">
           <h4 class="section-title">
-            <BarChartOutlined /> 解题统计
+            <BarChartOutlined /> 贡献统计
           </h4>
-          <a-row :gutter="16">
+          <a-row :gutter="[16, 16]">
             <a-col :span="8">
               <a-statistic
-                title="已解题目"
+                title="参与题目"
                 :value="user.stats.solved"
                 suffix="题"
               >
@@ -136,7 +144,7 @@
             </a-col>
             <a-col :span="8">
               <a-statistic
-                title="获得积分"
+                title="贡献度"
                 :value="user.stats.points"
                 suffix="分"
               >
@@ -148,11 +156,43 @@
             <a-col :span="8">
               <a-statistic
                 title="团队排名"
-                :value="user.stats.rank"
-                suffix="名"
+                :value="user.stats.rank || '--'"
+                :suffix="user.stats.rank ? '名' : ''"
               >
                 <template #prefix>
                   <CrownOutlined style="color: #1890ff" />
+                </template>
+              </a-statistic>
+            </a-col>
+            <a-col :span="8">
+              <a-statistic
+                title="发送消息"
+                :value="user.stats.messages"
+                suffix="条"
+              >
+                <template #prefix>
+                  <MessageOutlined style="color: #52c41a" />
+                </template>
+              </a-statistic>
+            </a-col>
+            <a-col :span="8">
+              <a-statistic
+                title="分享文件"
+                :value="user.stats.files"
+                suffix="个"
+              >
+                <template #prefix>
+                  <FlagOutlined style="color: #722ed1" />
+                </template>
+              </a-statistic>
+            </a-col>
+            <a-col :span="8">
+              <a-statistic
+                title="在线时长"
+                :value="user.stats.onlineTimeFormatted"
+              >
+                <template #prefix>
+                  <ClockCircleOutlined style="color: #13c2c2" />
                 </template>
               </a-statistic>
             </a-col>
@@ -209,7 +249,9 @@ import {
   CrownOutlined,
   CheckCircleOutlined,
   MessageOutlined,
-  FlagOutlined
+  FlagOutlined,
+  DeleteOutlined,
+  PlusOutlined
 } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
 import { getMember, getMyInfo, updateUserProfile } from '@/api/app'
@@ -249,11 +291,16 @@ const user = ref({
   role: 'member',
   online: false,
   skills: [],
+  skill_details: [],
   bio: '',
   stats: {
     solved: 0,
     points: 0,
-    rank: 0
+    rank: 0,
+    messages: 0,
+    files: 0,
+    onlineTime: 0,
+    onlineTimeFormatted: '0小时'
   },
   activities: [],
   joinedAt: new Date()
@@ -263,27 +310,50 @@ const editData = ref({
   nickname: user.value.nickname,
   email: user.value.email,
   skills: [...user.value.skills],
+  skill_details: [],
   bio: user.value.bio
 })
 
 // 加载用户数据
 const loadUserData = async () => {
   loading.value = true
+  console.log('[UserProfile] Starting to load user data...')
+  console.log('[UserProfile] Props:', {
+    userId: props.userId,
+    isEditable: props.isEditable,
+    open: props.open
+  })
+  
   try {
     let memberData
     
     // 如果有userId且不是当前用户，获取指定成员信息
     if (props.userId && !props.isEditable) {
+      console.log('[UserProfile] Fetching member info for userId:', props.userId)
       memberData = await getMember(props.userId)
+      console.log('[UserProfile] getMember returned:', memberData)
     } else {
       // 否则获取当前用户信息
+      console.log('[UserProfile] Fetching current user info (getMyInfo)')
       memberData = await getMyInfo()
+      console.log('[UserProfile] getMyInfo returned:', memberData)
     }
-    
-    console.log('Loaded user data:', memberData)
     
     // 更新用户数据
     if (memberData) {
+      console.log('[UserProfile] Processing member data...')
+      
+      // 格式化在线时长
+      const onlineTimeSeconds = memberData.online_time || 0
+      const hours = Math.floor(onlineTimeSeconds / 3600)
+      const minutes = Math.floor((onlineTimeSeconds % 3600) / 60)
+      let onlineTimeFormatted = '0小时'
+      if (hours > 0) {
+        onlineTimeFormatted = minutes > 0 ? `${hours}小时${minutes}分钟` : `${hours}小时`
+      } else if (minutes > 0) {
+        onlineTimeFormatted = `${minutes}分钟`
+      }
+      
       user.value = {
         id: memberData.id || memberData.ID || props.userId,
         name: memberData.nickname || memberData.Nickname || 'User',
@@ -293,29 +363,48 @@ const loadUserData = async () => {
         role: memberData.role || memberData.Role || 'member',
         online: memberData.is_online || memberData.IsOnline || false,
         skills: memberData.skills || memberData.Skills || [],
+        skill_details: memberData.skill_details || memberData.SkillDetails || [],
         bio: memberData.bio || memberData.Bio || '',
         stats: {
           solved: memberData.solved_challenges || 0,
           points: memberData.total_points || 0,
-          rank: memberData.rank || 0
+          rank: memberData.rank || 0,
+          messages: memberData.message_count || 0,
+          files: memberData.files_shared || 0,
+          onlineTime: onlineTimeSeconds,
+          onlineTimeFormatted: onlineTimeFormatted
         },
         activities: [],
         joinedAt: memberData.join_time ? new Date(memberData.join_time * 1000) : new Date()
       }
+      
+      console.log('[UserProfile] User data updated:', user.value)
       
       // 更新编辑数据
       editData.value = {
         nickname: user.value.nickname,
         email: user.value.email,
         skills: [...user.value.skills],
+        skill_details: (user.value.skill_details && user.value.skill_details.length)
+          ? JSON.parse(JSON.stringify(user.value.skill_details))
+          : (user.value.skills || []).map(cat => ({ category: cat, level: 3, experience: 0 })),
         bio: user.value.bio
       }
+      
+      console.log('[UserProfile] Successfully loaded user profile')
+    } else {
+      console.warn('[UserProfile] memberData is null or undefined')
     }
   } catch (error) {
-    console.error('Failed to load user data:', error)
-    message.warning('加载用户资料失败，显示默认数据')
+    console.error('[UserProfile] Failed to load user data:', error)
+    console.error('[UserProfile] Error details:', {
+      message: error.message,
+      stack: error.stack
+    })
+    message.warning('加载用户资料失败，显示默认数据: ' + (error.message || '未知错误'))
   } finally {
     loading.value = false
+    console.log('[UserProfile] Loading complete')
   }
 }
 
@@ -329,27 +418,28 @@ watch(() => props.open, async (newVal) => {
 const saveProfile = async () => {
   loading.value = true
   try {
+    console.log('[UserProfile] Saving profile data:', editData.value)
+    
     // 调用后端API更新用户配置
     const profileData = {
       nickname: editData.value.nickname,
       email: editData.value.email,
-      skills: editData.value.skills,
+    skills: editData.value.skills,
+    skill_details: editData.value.skill_details,
       bio: editData.value.bio
     }
     
-    await updateUserProfile(profileData)
+    const result = await updateUserProfile(profileData)
+    console.log('[UserProfile] updateUserProfile returned:', result)
     
-    // 更新本地数据
-    user.value.nickname = editData.value.nickname
-    user.value.email = editData.value.email
-    user.value.skills = editData.value.skills
-    user.value.bio = editData.value.bio
+    // 重新加载用户数据以确保同步
+    await loadUserData()
     
     message.success('资料已保存')
     editMode.value = false
     emit('update', user.value)
   } catch (error) {
-    console.error('Failed to save profile:', error)
+    console.error('[UserProfile] Failed to save profile:', error)
     message.error('保存失败: ' + (error.message || '未知错误'))
   } finally {
     loading.value = false
@@ -397,6 +487,18 @@ const formatTime = (time) => {
 
 const formatDate = (date) => {
   return dayjs(date).format('YYYY年MM月DD日')
+}
+
+// 技能编辑相关
+const addSkill = () => {
+  if (!editData.value.skill_details) editData.value.skill_details = []
+  editData.value.skill_details.push({ category: '', level: 3, experience: 0 })
+}
+
+const removeSkill = (index) => {
+  if (editData.value.skill_details && index >= 0 && index < editData.value.skill_details.length) {
+    editData.value.skill_details.splice(index, 1)
+  }
 }
 </script>
 
@@ -480,5 +582,24 @@ const formatDate = (date) => {
   color: rgba(0, 0, 0, 0.45);
   margin-top: 4px;
 }
+
+/* 技能相关 */
+.skill-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.experience-text {
+  color: #888;
+  font-size: 12px;
+}
+
+.skill-edit-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
 </style>
+
 

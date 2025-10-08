@@ -64,7 +64,7 @@ export namespace app {
 	    category: string;
 	    difficulty: string;
 	    points: number;
-	    flags: string[];
+	    flag: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateChallengeRequest(source);
@@ -77,7 +77,7 @@ export namespace app {
 	        this.category = source["category"];
 	        this.difficulty = source["difficulty"];
 	        this.points = source["points"];
-	        this.flags = source["flags"];
+	        this.flag = source["flag"];
 	    }
 	}
 	export class DownloadFileRequest {
@@ -160,6 +160,20 @@ export namespace app {
 	        this.mention_only = source["mention_only"];
 	    }
 	}
+	export class PinMessageRequest {
+	    message_id: string;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PinMessageRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.message_id = source["message_id"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class Response {
 	    success: boolean;
 	    data?: any;
@@ -237,6 +251,7 @@ export namespace app {
 	export class SendMessageRequest {
 	    content: string;
 	    type: string;
+	    channel_id?: string;
 	    reply_to_id?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -247,6 +262,7 @@ export namespace app {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.content = source["content"];
 	        this.type = source["type"];
+	        this.channel_id = source["channel_id"];
 	        this.reply_to_id = source["reply_to_id"];
 	    }
 	}
@@ -280,6 +296,22 @@ export namespace app {
 	        this.description = source["description"];
 	    }
 	}
+	export class SkillDetail {
+	    category: string;
+	    level: number;
+	    experience: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SkillDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.category = source["category"];
+	        this.level = source["level"];
+	        this.experience = source["experience"];
+	    }
+	}
 	export class SubmitFlagRequest {
 	    challenge_id: string;
 	    flag: string;
@@ -300,7 +332,7 @@ export namespace app {
 	    category?: string;
 	    difficulty?: string;
 	    points?: number;
-	    flags?: string[];
+	    flag?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UpdateChallengeRequest(source);
@@ -313,7 +345,7 @@ export namespace app {
 	        this.category = source["category"];
 	        this.difficulty = source["difficulty"];
 	        this.points = source["points"];
-	        this.flags = source["flags"];
+	        this.flag = source["flag"];
 	    }
 	}
 	export class UpdateProgressRequest {
@@ -349,6 +381,10 @@ export namespace app {
 	export class UserProfile {
 	    nickname: string;
 	    avatar: string;
+	    email: string;
+	    bio: string;
+	    skills: string[];
+	    skill_details?: SkillDetail[];
 	    status: string;
 	    custom_status: string;
 	    theme: string;
@@ -363,6 +399,10 @@ export namespace app {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.nickname = source["nickname"];
 	        this.avatar = source["avatar"];
+	        this.email = source["email"];
+	        this.bio = source["bio"];
+	        this.skills = source["skills"];
+	        this.skill_details = this.convertValues(source["skill_details"], SkillDetail);
 	        this.status = source["status"];
 	        this.custom_status = source["custom_status"];
 	        this.theme = source["theme"];

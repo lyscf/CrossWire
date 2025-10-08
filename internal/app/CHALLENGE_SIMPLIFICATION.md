@@ -108,7 +108,7 @@ const response = await CreateChallenge({
     category: "Web",
     difficulty: "Easy",
     points: 100,
-    flags: ["flag{example}"] // 可选，不会用于验证
+    flag: "flag{example}" // 可选，不会用于验证
 });
 ```
 

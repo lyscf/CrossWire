@@ -17,17 +17,17 @@ type Challenge struct {
 	Points       int         `gorm:"type:integer;not null" json:"points"`
 	Description  string      `gorm:"type:text;not null" json:"description"`
 	FlagFormat   string      `gorm:"type:text" json:"flag_format,omitempty"`
-	FlagHash     string      `gorm:"type:text" json:"-"` // 不返回给前端
+	Flag         string      `gorm:"type:text" json:"flag"` // 协作平台：明文存储，对所有人可见
 	URL          string      `gorm:"type:text" json:"url,omitempty"`
 	Attachments  StringArray `gorm:"type:text" json:"attachments,omitempty"`
 	Tags         StringArray `gorm:"type:text" json:"tags,omitempty"`
 	Status       string      `gorm:"type:text;not null;default:'open';index:idx_challenges_status" json:"status"`
 	SolvedBy     StringArray `gorm:"type:text" json:"solved_by,omitempty"`
-	SolvedAt     *time.Time  `gorm:"type:integer" json:"solved_at,omitempty"`
+	SolvedAt     time.Time   `gorm:"not null" json:"solved_at"`
 	AssignedTo   StringArray `gorm:"type:text" json:"assigned_to,omitempty"` // APP层使用：已分配给的成员ID列表
 	CreatedBy    string      `gorm:"type:text;not null" json:"created_by"`
-	CreatedAt    time.Time   `gorm:"type:integer;not null;index:idx_challenges_created_at" json:"created_at"`
-	UpdatedAt    time.Time   `gorm:"type:integer;not null" json:"updated_at"`
+	CreatedAt    time.Time   `gorm:"not null;index:idx_challenges_created_at" json:"created_at"`
+	UpdatedAt    time.Time   `gorm:"not null" json:"updated_at"`
 	Metadata     JSONField   `gorm:"type:text" json:"metadata,omitempty"`
 
 	// 关联
@@ -80,7 +80,7 @@ type ChallengeAssignment struct {
 	ChallengeID string    `gorm:"type:text;not null;primaryKey;index:idx_assignments_challenge" json:"challenge_id"`
 	MemberID    string    `gorm:"type:text;not null;primaryKey;index:idx_assignments_member" json:"member_id"`
 	AssignedBy  string    `gorm:"type:text;not null" json:"assigned_by"`
-	AssignedAt  time.Time `gorm:"type:integer;not null" json:"assigned_at"`
+	AssignedAt  time.Time `gorm:"not null" json:"assigned_at"`
 	Role        string    `gorm:"type:text;not null;default:'member'" json:"role"` // lead/member
 	Status      string    `gorm:"type:text;not null;default:'assigned';index:idx_assignments_status" json:"status"`
 	Notes       string    `gorm:"type:text" json:"notes,omitempty"`
@@ -113,7 +113,7 @@ type ChallengeProgress struct {
 	Summary     string    `gorm:"type:text" json:"summary,omitempty"`
 	Findings    string    `gorm:"type:text" json:"findings,omitempty"`
 	Blockers    string    `gorm:"type:text" json:"blockers,omitempty"`
-	UpdatedAt   time.Time `gorm:"type:integer;not null;index:idx_progress_updated" json:"updated_at"`
+	UpdatedAt   time.Time `gorm:"not null;index:idx_progress_updated" json:"updated_at"`
 	Metadata    JSONField `gorm:"type:text" json:"metadata,omitempty"`
 
 	// 关联
@@ -140,14 +140,13 @@ func (c *ChallengeProgress) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
-// ChallengeSubmission Flag 提交记录
+// ChallengeSubmission Flag 提交记录（协作平台：Flag对所有人可见，可被修改）
 type ChallengeSubmission struct {
 	ID           string    `gorm:"primaryKey;type:text" json:"id"`
 	ChallengeID  string    `gorm:"type:text;not null;index:idx_submissions_challenge" json:"challenge_id"`
 	MemberID     string    `gorm:"type:text;not null;index:idx_submissions_member" json:"member_id"`
-	Flag         string    `gorm:"type:text;not null" json:"-"` // 加密存储
-	IsCorrect    bool      `gorm:"type:integer;not null;index:idx_submissions_correct" json:"is_correct"`
-	SubmittedAt  time.Time `gorm:"type:integer;not null;index:idx_submissions_time" json:"submitted_at"`
+	Flag         string    `gorm:"type:text;not null" json:"flag"` // 协作平台：Flag对所有人可见
+	SubmittedAt  time.Time `gorm:"not null;index:idx_submissions_time" json:"submitted_at"`
 	IPAddress    string    `gorm:"type:text" json:"ip_address,omitempty"`
 	ResponseTime int       `gorm:"type:integer" json:"response_time,omitempty"` // 毫秒
 	Metadata     JSONField `gorm:"type:text" json:"metadata,omitempty"`
@@ -179,7 +178,7 @@ type ChallengeHint struct {
 	Cost        int         `gorm:"type:integer;default:0" json:"cost"`
 	UnlockedBy  StringArray `gorm:"type:text" json:"unlocked_by,omitempty"`
 	CreatedBy   string      `gorm:"type:text;not null" json:"created_by"`
-	CreatedAt   time.Time   `gorm:"type:integer;not null" json:"created_at"`
+	CreatedAt   time.Time   `gorm:"not null" json:"created_at"`
 
 	// 关联
 	Challenge *Challenge `gorm:"foreignKey:ChallengeID;constraint:OnDelete:CASCADE" json:"-"`

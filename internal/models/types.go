@@ -44,11 +44,12 @@ const (
 type MessageType string
 
 const (
-	MessageTypeText    MessageType = "text"
-	MessageTypeCode    MessageType = "code"
-	MessageTypeFile    MessageType = "file"
-	MessageTypeSystem  MessageType = "system"
-	MessageTypeControl MessageType = "control"
+	MessageTypeText     MessageType = "text"
+	MessageTypeCode     MessageType = "code"
+	MessageTypeFile     MessageType = "file"
+	MessageTypeSystem   MessageType = "system"
+	MessageTypeControl  MessageType = "control"
+	MessageTypeReaction MessageType = "reaction"
 )
 
 // StorageType 文件存储类型

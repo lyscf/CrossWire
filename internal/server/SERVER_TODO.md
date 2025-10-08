@@ -251,7 +251,7 @@ func (om *OfflineManager) CleanupOldMessages(maxAge time.Duration) {
 func (cm *ChallengeManager) CreateChallenge(challenge *models.Challenge) error {
     // 1. 验证权限（仅 Admin/Leader）
     // 2. 生成 Challenge ID
-    // 3. Hash Flag
+// 3. 存储Flag明文
     // 4. 保存到数据库
     // 5. 广播创建事件
     return nil
@@ -266,10 +266,10 @@ func (cm *ChallengeManager) AssignChallenge(challengeID, memberID string, assign
     return nil
 }
 
-// SubmitFlag 验证 Flag
+// SubmitFlag 记录 Flag（不验证）
 func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error {
     // 1. 获取挑战
-    // 2. Hash Flag 并对比
+// 2. 记录Flag提交（不验证）
     // 3. 记录提交
     // 4. 更新统计
     // 5. 广播解决事件（如果正确）
@@ -557,20 +557,6 @@ type DetailedStats struct {
 - [ ] 实现日志导出功能
 
 ---
-
-### 11. 🟢 实现消息搜索
-
-**需求:**
-- 客户端可能需要搜索历史消息
-- 使用 SQLite FTS5 全文搜索
-
-**文件:** `internal/server/message_router.go`
-
-**TODO 清单:**
-- [ ] 配置 FTS5 虚拟表
-- [ ] 实现 SearchMessages 方法
-- [ ] 支持多种搜索模式（关键词、用户、时间范围）
-- [ ] 添加搜索结果高亮
 
 ---
 

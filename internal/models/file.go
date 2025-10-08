@@ -27,8 +27,8 @@ type File struct {
 	UploadStatus   UploadStatus `gorm:"type:text;default:'pending'" json:"upload_status"`
 	Thumbnail      []byte       `gorm:"type:blob" json:"thumbnail,omitempty"`
 	PreviewText    string       `gorm:"type:text" json:"preview_text,omitempty"`
-	UploadedAt     time.Time    `gorm:"type:integer;not null;index:idx_files_uploaded_at" json:"uploaded_at"`
-	ExpiresAt      *time.Time   `gorm:"type:integer;index:idx_files_expires" json:"expires_at,omitempty"`
+	UploadedAt     time.Time    `gorm:"not null;index:idx_files_uploaded_at" json:"uploaded_at"`
+	ExpiresAt      time.Time    `gorm:"not null;index:idx_files_expires" json:"expires_at"`
 	Encrypted      bool         `gorm:"type:integer;default:1" json:"encrypted"`
 	EncryptionKey  []byte       `gorm:"type:blob" json:"-"`
 	Metadata       JSONField    `gorm:"type:text" json:"metadata,omitempty"`
@@ -54,10 +54,10 @@ func (f *File) BeforeCreate(tx *gorm.DB) error {
 
 // IsExpired 检查文件是否过期
 func (f *File) IsExpired() bool {
-	if f.ExpiresAt == nil {
+	if f.ExpiresAt.IsZero() {
 		return false
 	}
-	return time.Now().After(*f.ExpiresAt)
+	return time.Now().After(f.ExpiresAt)
 }
 
 // FileChunk 文件分块状态
@@ -68,9 +68,9 @@ type FileChunk struct {
 	Size        int       `gorm:"type:integer;not null" json:"size"`
 	Checksum    string    `gorm:"type:text;not null" json:"checksum"`
 	Uploaded    bool      `gorm:"type:integer;default:0" json:"uploaded"`
-	UploadedAt  time.Time `gorm:"type:integer" json:"uploaded_at,omitempty"`
+	UploadedAt  time.Time `gorm:"not null" json:"uploaded_at"`
 	RetryCount  int       `gorm:"type:integer;default:0" json:"retry_count"`
-	LastAttempt time.Time `gorm:"type:integer" json:"last_attempt,omitempty"`
+	LastAttempt time.Time `gorm:"not null" json:"last_attempt"`
 
 	// 关联
 	File *File `gorm:"foreignKey:FileID;constraint:OnDelete:CASCADE" json:"-"`

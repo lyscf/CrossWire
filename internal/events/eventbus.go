@@ -13,12 +13,14 @@ type EventType string
 
 const (
 	// ===== 消息相关事件 =====
-	EventMessageReceived EventType = "message:received" // 收到新消息
-	EventMessageSent     EventType = "message:sent"     // 消息已发送
-	EventMessageDeleted  EventType = "message:deleted"  // 消息被删除
-	EventMessagePinned   EventType = "message:pinned"   // 消息被置顶
-	EventMessageEdited   EventType = "message:edited"   // 消息被编辑
-	EventMessageUpdated  EventType = "message:updated"  // 消息被更新（通用）
+	EventMessageReceived EventType = "message:received"         // 收到新消息
+	EventMessageSent     EventType = "message:sent"             // 消息已发送
+	EventMessageDeleted  EventType = "message:deleted"          // 消息被删除
+	EventMessagePinned   EventType = "message:pinned"           // 消息被置顶
+	EventMessageEdited   EventType = "message:edited"           // 消息被编辑
+	EventMessageUpdated  EventType = "message:updated"          // 消息被更新（通用）
+	EventReactionAdded   EventType = "message:reaction:added"   // 消息反应添加
+	EventReactionRemoved EventType = "message:reaction:removed" // 消息反应移除
 
 	// ===== 成员相关事件 =====
 	EventMemberJoined      EventType = "member:joined"       // 成员加入
@@ -47,6 +49,7 @@ const (
 	EventFileDownloadProgress  EventType = "file:download:progress"  // 文件下载进度
 	EventFileDownloadCompleted EventType = "file:download:completed" // 文件下载完成
 	EventFileDownloadFailed    EventType = "file:download:failed"    // 文件下载失败
+	EventFileDeleted           EventType = "file:deleted"            // 文件被删除
 
 	// ===== 频道相关事件 =====
 	EventChannelCreated EventType = "channel:created" // 频道创建
@@ -462,14 +465,21 @@ func (eb *EventBus) invokeHandler(sub *Subscription, event *Event) {
 }
 
 // GetStats 获取统计信息
-func (eb *EventBus) GetStats() EventBusStats {
+func (eb *EventBus) GetStats() *EventBusStats {
 	eb.stats.mutex.RLock()
 	defer eb.stats.mutex.RUnlock()
 
-	stats := eb.stats
-	stats.Subscriptions = eb.countSubscriptions()
-
-	return stats
+	statsCopy := &EventBusStats{
+		EventsPublished: eb.stats.EventsPublished,
+		EventsProcessed: eb.stats.EventsProcessed,
+		EventsDropped:   eb.stats.EventsDropped,
+		Subscriptions:   eb.countSubscriptions(),
+		HandlerErrors:   eb.stats.HandlerErrors,
+		AverageLatency:  eb.stats.AverageLatency,
+		StartTime:       eb.stats.StartTime,
+		LastEventTime:   eb.stats.LastEventTime,
+	}
+	return statsCopy
 }
 
 // countSubscriptions 统计订阅数

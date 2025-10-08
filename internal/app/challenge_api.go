@@ -32,9 +32,7 @@ func (a *App) CreateChallenge(req CreateChallengeRequest) Response {
 		return NewErrorResponse("invalid_request", "题目标题不能为空", "")
 	}
 
-	if len(req.Flags) == 0 {
-		return NewErrorResponse("invalid_request", "至少需要一个flag", "")
-	}
+	// 协作平台：Flag可选且为明文
 
 	a.logger.Info("Creating challenge: %s", req.Title)
 
@@ -46,6 +44,7 @@ func (a *App) CreateChallenge(req CreateChallengeRequest) Response {
 		Difficulty:  req.Difficulty,
 		Description: req.Description,
 		Points:      req.Points,
+		Flag:        req.Flag,
 		Status:      "open",
 		CreatedBy:   "server",
 	}
@@ -269,10 +268,9 @@ func (a *App) SubmitFlag(req SubmitFlagRequest) Response {
 			points = ch.Points
 		}
 		return NewSuccessResponse(SubmitFlagResponse{
-			Success:   true,
-			IsCorrect: true,
-			Message:   "Flag已提交，服务器将接受",
-			Points:    points,
+			Success: true,
+			Message: "Flag已提交，协作记录已保存",
+			Points:  points,
 		})
 	}
 	return NewErrorResponse("invalid_mode", "无效的运行模式", "")
@@ -298,23 +296,25 @@ func (a *App) UpdateChallengeProgress(req UpdateProgressRequest) Response {
 		return NewErrorResponse("invalid_request", "进度必须在0-100之间", "")
 	}
 
-	// 仅服务端写进度，客户端暂未实现
-	if mode != ModeServer || srv == nil {
-		return NewErrorResponse("not_implemented", "客户端进度更新暂未实现", "")
+	// 服务端：直接写入
+	if mode == ModeServer && srv != nil {
+		progress := &models.ChallengeProgress{
+			ChallengeID: req.ChallengeID,
+			MemberID:    "server",
+			Progress:    req.Progress,
+			Summary:     req.Summary,
+		}
+		if err := srv.UpdateChallengeProgress(progress); err != nil {
+			return NewErrorResponse("update_error", "更新进度失败", err.Error())
+		}
+		return NewSuccessResponse(map[string]interface{}{
+			"message":  "进度已更新",
+			"progress": req.Progress,
+		})
 	}
-	progress := &models.ChallengeProgress{
-		ChallengeID: req.ChallengeID,
-		MemberID:    "server",
-		Progress:    req.Progress,
-		Summary:     req.Summary,
-	}
-	if err := srv.UpdateChallengeProgress(progress); err != nil {
-		return NewErrorResponse("update_error", "更新进度失败", err.Error())
-	}
-	return NewSuccessResponse(map[string]interface{}{
-		"message":  "进度已更新",
-		"progress": req.Progress,
-	})
+
+	// 客户端：暂不实现（保留原行为）
+	return NewErrorResponse("not_implemented", "客户端进度更新暂未实现", "")
 }
 
 // AddHint 添加提示（已禁用 - 不需要此功能）
@@ -364,7 +364,7 @@ func (a *App) challengeToDTO(challenge *models.Challenge) *ChallengeDTO {
 		Category:     challenge.Category,
 		Difficulty:   challenge.Difficulty,
 		Points:       challenge.Points,
-		Flags:        []string{}, // 不返回flags给前端
+		Flag:         challenge.Flag,
 		IsSolved:     len(challenge.SolvedBy) > 0,
 		SolvedBy:     challenge.SolvedBy,
 		Hints:        hints,
@@ -373,4 +373,59 @@ func (a *App) challengeToDTO(challenge *models.Challenge) *ChallengeDTO {
 		CreatedAt:    challenge.CreatedAt.Unix(),
 		UpdatedAt:    challenge.UpdatedAt.Unix(),
 	}
+}
+
+// GetChallengeProgress 获取某成员的题目进度
+func (a *App) GetChallengeProgress(challengeID string, memberID string) Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	if challengeID == "" || memberID == "" {
+		return NewErrorResponse("invalid_request", "challengeID 与 memberID 不能为空", "")
+	}
+
+	if mode == ModeServer && srv != nil {
+		progress, err := srv.GetChallengeProgress(challengeID, memberID)
+		if err != nil || progress == nil {
+			return NewSuccessResponse(map[string]interface{}{
+				"challenge_id": challengeID,
+				"member_id":    memberID,
+				"progress":     0,
+			})
+		}
+		return NewSuccessResponse(map[string]interface{}{
+			"challenge_id": progress.ChallengeID,
+			"member_id":    progress.MemberID,
+			"progress":     progress.Progress,
+			"summary":      progress.Summary,
+			"updated_at":   progress.UpdatedAt.Unix(),
+		})
+	}
+
+	if mode == ModeClient && cli != nil {
+		pr, err := a.db.ChallengeRepo().GetProgress(challengeID, memberID)
+		if err != nil || pr == nil {
+			return NewSuccessResponse(map[string]interface{}{
+				"challenge_id": challengeID,
+				"member_id":    memberID,
+				"progress":     0,
+			})
+		}
+		return NewSuccessResponse(map[string]interface{}{
+			"challenge_id": pr.ChallengeID,
+			"member_id":    pr.MemberID,
+			"progress":     pr.Progress,
+			"summary":      pr.Summary,
+			"updated_at":   pr.UpdatedAt.Unix(),
+		})
+	}
+
+	return NewErrorResponse("invalid_mode", "无效的运行模式", "")
 }

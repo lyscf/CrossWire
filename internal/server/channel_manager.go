@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -160,23 +161,31 @@ func (cm *ChannelManager) loadMembers() error {
 // loadMuteRecords 加载禁言记录
 func (cm *ChannelManager) loadMuteRecords() error {
 	// TODO: 添加GetMuteRecords方法到MemberRepository
-	// 暂时使用空列表
-	var records []*models.MuteRecord
+	// 暂时不加载禁言记录，等待实现
+	cm.server.logger.Debug("[ChannelManager] Mute records loading not implemented yet")
 
-	if len(records) > 0 {
-		cm.muteMutex.Lock()
-		defer cm.muteMutex.Unlock()
+	/*
+		// 示例代码（待实现）：
+		records, err := cm.server.memberRepo.GetMuteRecords(cm.server.config.ChannelID)
+		if err != nil {
+			return err
+		}
+
+		if len(records) > 0 {
+			cm.muteMutex.Lock()
+			defer cm.muteMutex.Unlock()
 
 		now := time.Now()
 		for _, record := range records {
 			// 只加载未过期的禁言记录
-			if record.ExpiresAt != nil && record.ExpiresAt.After(now) {
+			if !record.ExpiresAt.IsZero() && record.ExpiresAt.After(now) {
 				cm.muteRecords[record.MemberID] = record
 			}
 		}
 
-		cm.server.logger.Info("[ChannelManager] Loaded %d active mute records", len(cm.muteRecords))
-	}
+			cm.server.logger.Info("[ChannelManager] Loaded %d active mute records", len(cm.muteRecords))
+		}
+	*/
 
 	return nil
 }
@@ -191,24 +200,41 @@ func (cm *ChannelManager) ensureServerMember() error {
 		return nil
 	}
 
+	cm.server.logger.Info("[ChannelManager] Creating server member...")
+
 	// 创建服务器成员
 	serverMember := &models.Member{
-		ID:           serverMemberID,
-		ChannelID:    cm.server.config.ChannelID,
-		Nickname:     "Server",
-		Role:         models.RoleAdmin,
-		Status:       models.StatusOnline,
-		PublicKey:    cm.server.config.PublicKey,
-		JoinedAt:     time.Now(),
-		LastSeenAt:   time.Now(),
-		MessageCount: 0,
-		FilesShared:  0,
+		ID:            serverMemberID,
+		ChannelID:     cm.server.config.ChannelID,
+		Nickname:      "Server",
+		Avatar:        "",
+		Role:          models.RoleAdmin,
+		Status:        models.StatusOnline,
+		PublicKey:     cm.server.config.PublicKey,
+		JoinedAt:      time.Now(),
+		JoinTime:      time.Now(),
+		LastSeenAt:    time.Now(),
+		LastHeartbeat: time.Now(),
+		MessageCount:  0,
+		FilesShared:   0,
+		OnlineTime:    0,
+		IsOnline:      true,
+		IsMuted:       false,
+		IsBanned:      false,
+		Skills:        models.SkillTags{},
+		Metadata: models.JSONField{
+			"email": "admin@crosswire.local",
+			"bio":   "CrossWire Server Administrator",
+		},
 	}
 
 	// 保存到数据库
 	if err := cm.server.memberRepo.Create(serverMember); err != nil {
+		cm.server.logger.Error("[ChannelManager] Failed to create server member: %v", err)
 		return fmt.Errorf("failed to create server member: %w", err)
 	}
+
+	cm.server.logger.Info("[ChannelManager] Server member created successfully")
 
 	// 添加到内存
 	cm.membersMutex.Lock()
@@ -360,12 +386,13 @@ func (cm *ChannelManager) MuteMember(memberID string, duration time.Duration, re
 		MemberID:  memberID,
 		Reason:    reason,
 		MutedAt:   time.Now(),
-		ExpiresAt: &expiresAt,
+		ExpiresAt: expiresAt,
 	}
 
 	// 保存到数据库
-	// TODO: 添加MuteMember方法到MemberRepository
-	// 暂时只更新内存
+	if err := cm.server.memberRepo.MuteMember(muteRecord); err != nil {
+		return fmt.Errorf("failed to persist mute record: %w", err)
+	}
 
 	// 添加到内存
 	cm.muteMutex.Lock()
@@ -393,9 +420,10 @@ func (cm *ChannelManager) UnmuteMember(memberID string) error {
 		return errors.New("member not found")
 	}
 
-	// 从数据库删除
-	// TODO: 添加UnmuteMember方法到MemberRepository
-	// 暂时只更新内存
+	// 从数据库删除(标记失效)
+	if err := cm.server.memberRepo.UnmuteMember(memberID, "server"); err != nil {
+		return fmt.Errorf("failed to unmute in repository: %w", err)
+	}
 
 	// 从内存删除
 	cm.muteMutex.Lock()
@@ -425,7 +453,7 @@ func (cm *ChannelManager) IsMuted(memberID string) bool {
 	}
 
 	// 检查是否过期
-	if muteRecord.ExpiresAt != nil && time.Now().After(*muteRecord.ExpiresAt) {
+	if !muteRecord.ExpiresAt.IsZero() && time.Now().After(muteRecord.ExpiresAt) {
 		// 过期，自动解除禁言
 		cm.muteMutex.Lock()
 		delete(cm.muteRecords, memberID)
@@ -499,8 +527,127 @@ func (cm *ChannelManager) GetTotalCount() int {
 
 // HandleMemberStatus 处理成员状态变化
 func (cm *ChannelManager) HandleMemberStatus(msg *transport.Message) {
-	// TODO: 实现成员状态变化处理
-	cm.server.logger.Debug("[ChannelManager] Member status update: %s", msg.SenderID)
+	// 解密并解析状态更新
+	decrypted, err := cm.server.crypto.DecryptMessage(msg.Payload)
+	if err != nil {
+		cm.server.logger.Error("[ChannelManager] Failed to decrypt member status: %v", err)
+		return
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(decrypted, &payload); err != nil {
+		cm.server.logger.Error("[ChannelManager] Failed to unmarshal member status: %v", err)
+		return
+	}
+
+	memberID, _ := payload["member_id"].(string)
+	statusStr, _ := payload["status"].(string)
+	if memberID == "" || statusStr == "" {
+		cm.server.logger.Warn("[ChannelManager] Invalid member status payload")
+		return
+	}
+
+	// 更新内存与数据库
+	status := models.UserStatus(statusStr)
+	if err := cm.UpdateMemberStatus(memberID, status); err != nil {
+		cm.server.logger.Error("[ChannelManager] Failed to update member status: %v", err)
+		return
+	}
+
+	// 更新心跳时间
+	if err := cm.server.memberRepo.UpdateHeartbeat(memberID); err != nil {
+		cm.server.logger.Warn("[ChannelManager] Failed to update heartbeat: %v", err)
+	}
+
+	// 广播成员状态
+	resp := map[string]interface{}{
+		"type":       "member.status",
+		"channel_id": cm.server.config.ChannelID,
+		"member_id":  memberID,
+		"status":     statusStr,
+		"timestamp":  time.Now().Unix(),
+	}
+	data, _ := json.Marshal(resp)
+	enc, err := cm.server.crypto.EncryptMessage(data)
+	if err != nil {
+		cm.server.logger.Error("[ChannelManager] Failed to encrypt status broadcast: %v", err)
+		return
+	}
+	bmsg := &transport.Message{
+		Type:      transport.MessageTypeControl,
+		SenderID:  "server",
+		Payload:   enc,
+		Timestamp: time.Now(),
+	}
+	if err := cm.server.transport.SendMessage(bmsg); err != nil {
+		cm.server.logger.Error("[ChannelManager] Failed to send status broadcast: %v", err)
+	}
+}
+
+// CheckOfflineMembers 检查超时未心跳成员并标记离线
+func (cm *ChannelManager) CheckOfflineMembers(threshold time.Duration) {
+	now := time.Now()
+
+	cm.membersMutex.RLock()
+	ids := make([]string, 0, len(cm.members))
+	for id := range cm.members {
+		ids = append(ids, id)
+	}
+	cm.membersMutex.RUnlock()
+
+	for _, memberID := range ids {
+		member := cm.GetMemberByID(memberID)
+		if member == nil {
+			continue
+		}
+		if member.Status == models.StatusOffline {
+			continue
+		}
+		if member.LastHeartbeat.IsZero() {
+			continue
+		}
+		if now.Sub(member.LastHeartbeat) > threshold {
+			// 标记离线（不更新 LastHeartbeat）
+			oldStatus := member.Status
+			member.Status = models.StatusOffline
+			member.IsOnline = false
+			member.LastSeenAt = now
+
+			// 更新数据库状态（仅status/last_seen）
+			if err := cm.server.memberRepo.UpdateStatus(memberID, models.StatusOffline); err != nil {
+				cm.server.logger.Warn("[ChannelManager] Failed to persist offline status: %v", err)
+			}
+
+			// 发布事件
+			cm.server.eventBus.Publish(events.EventStatusChanged, events.NewStatusChangedEvent(
+				memberID, cm.server.config.ChannelID, oldStatus, models.StatusOffline,
+			))
+
+			// 广播成员状态
+			resp := map[string]interface{}{
+				"type":       "member.status",
+				"channel_id": cm.server.config.ChannelID,
+				"member_id":  memberID,
+				"status":     string(models.StatusOffline),
+				"timestamp":  time.Now().Unix(),
+			}
+			data, _ := json.Marshal(resp)
+			enc, err := cm.server.crypto.EncryptMessage(data)
+			if err != nil {
+				cm.server.logger.Error("[ChannelManager] Failed to encrypt offline status broadcast: %v", err)
+				continue
+			}
+			bmsg := &transport.Message{
+				Type:      transport.MessageTypeControl,
+				SenderID:  "server",
+				Payload:   enc,
+				Timestamp: time.Now(),
+			}
+			if err := cm.server.transport.SendMessage(bmsg); err != nil {
+				cm.server.logger.Error("[ChannelManager] Failed to send offline status broadcast: %v", err)
+			}
+		}
+	}
 }
 
 // KickMember 踢出成员（主动移除）
@@ -552,11 +699,11 @@ func (cm *ChannelManager) BanMember(memberID string, reason string, bannedBy str
 	member.LastHeartbeat = time.Now()
 
 	// 创建封禁记录（使用禁言记录结构，但时间更长）
-	var expiresAt *time.Time
+	var expiresAt time.Time
 	if duration > 0 {
-		expiry := time.Now().Add(duration)
-		expiresAt = &expiry
+		expiresAt = time.Now().Add(duration)
 	}
+	// 如果duration <= 0, expiresAt会是零值，表示永久封禁
 
 	banRecord := &models.MuteRecord{
 		ChannelID: cm.server.config.ChannelID,
@@ -630,7 +777,7 @@ func (cm *ChannelManager) IsBanned(memberID string) bool {
 	}
 
 	// 检查是否过期
-	if record.ExpiresAt != nil && time.Now().After(*record.ExpiresAt) {
+	if !record.ExpiresAt.IsZero() && time.Now().After(record.ExpiresAt) {
 		// 过期，自动解封
 		cm.muteMutex.Lock()
 		delete(cm.muteRecords, memberID)

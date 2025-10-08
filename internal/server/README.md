@@ -226,7 +226,7 @@ func (am *AuthManager) CheckPermission(memberID string, requiredRole models.Role
 func (cm *ChallengeManager) CreateChallenge(challenge *models.Challenge) error
 func (cm *ChallengeManager) AssignChallenge(challengeID, memberID, assignedBy string) error
 func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message)
-func (cm *ChallengeManager) VerifyFlag(challengeID, flag string) (bool, error)
+// 协作平台不验证Flag，以上接口不适用
 func (cm *ChallengeManager) UnlockHint(challengeID, memberID string, hintIndex int) error
 ```
 

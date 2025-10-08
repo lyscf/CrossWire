@@ -161,22 +161,103 @@ func (a *App) GetUserProfile() Response {
 
 // UpdateUserProfile 更新用户配置
 func (a *App) UpdateUserProfile(profile UserProfile) Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		a.logger.Warn("[UpdateUserProfile] Not running")
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	// 获取当前用户ID
+	var memberID string
+	if mode == ModeServer && srv != nil {
+		memberID = "server"
+		a.logger.Debug("[UpdateUserProfile] Server mode, using member ID: %s", memberID)
+	} else if mode == ModeClient && cli != nil {
+		memberID = cli.GetMemberID()
+		a.logger.Debug("[UpdateUserProfile] Client mode, member ID: %s", memberID)
+	} else {
+		a.logger.Error("[UpdateUserProfile] Invalid mode: %s", mode)
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	// 从数据库获取成员信息
+	a.logger.Debug("[UpdateUserProfile] Fetching member info for ID: %s", memberID)
+	member, err := a.db.MemberRepo().GetByID(memberID)
+	if err != nil {
+		a.logger.Error("[UpdateUserProfile] Failed to get member info: %v", err)
+		return NewErrorResponse("not_found", "获取用户信息失败", err.Error())
+	}
+
+	// 更新成员信息
+	if profile.Nickname != "" {
+		member.Nickname = profile.Nickname
+	}
+	if profile.Avatar != "" {
+		member.Avatar = profile.Avatar
+	}
+
+    // 更新技能标签（优先使用 SkillDetails，向后兼容 Skills）
+    if len(profile.SkillDetails) > 0 {
+        skills := make(models.SkillTags, len(profile.SkillDetails))
+        for i, d := range profile.SkillDetails {
+            skills[i] = models.SkillTag{
+                Category:   d.Category,
+                Level:      d.Level,
+                Experience: d.Experience,
+                LastUsed:   time.Now(),
+            }
+        }
+        member.Skills = skills
+    } else if len(profile.Skills) > 0 {
+        skills := make(models.SkillTags, len(profile.Skills))
+        for i, skillName := range profile.Skills {
+            skills[i] = models.SkillTag{
+                Category: skillName,
+                Level:    2, // 默认中级
+            }
+        }
+        member.Skills = skills
+    }
+
+	// 更新元数据（Email和Bio）
+	if member.Metadata == nil {
+		member.Metadata = make(map[string]interface{})
+	}
+	if profile.Email != "" {
+		member.Metadata["email"] = profile.Email
+	}
+	if profile.Bio != "" {
+		member.Metadata["bio"] = profile.Bio
+	}
+
+	// 保存到数据库
+	a.logger.Debug("[UpdateUserProfile] Saving member info to database...")
+	if err := a.db.MemberRepo().Update(member); err != nil {
+		a.logger.Error("[UpdateUserProfile] Failed to update member: %v", err)
+		return NewErrorResponse("update_error", "更新用户信息失败", err.Error())
+	}
+
+	a.logger.Info("[UpdateUserProfile] Successfully updated profile for member: %s", memberID)
+
+	// 更新内存中的用户配置
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// 更新配置
 	a.userProfile = &profile
-
-	// TODO: 保存到数据库
-
-	a.logger.Info("User profile updated")
+	a.mu.Unlock()
 
 	// 发送事件到前端
 	a.emitEvent(EventInfo, map[string]interface{}{
 		"message": "用户配置已更新",
 	})
 
-	return NewSuccessResponse(a.userProfile)
+	return NewSuccessResponse(map[string]interface{}{
+		"message": "资料已更新",
+		"profile": a.memberToDTO(member),
+	})
 }
 
 // GetRecentChannels 获取最近的频道

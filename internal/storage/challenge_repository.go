@@ -1,9 +1,6 @@
 package storage
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"time"
 
 	"crosswire/internal/models"
@@ -91,19 +88,7 @@ func (r *ChallengeRepository) Delete(challengeID string) error {
 	return r.db.GetChannelDB().Where("id = ?", challengeID).Delete(&models.Challenge{}).Error
 }
 
-// HashFlag 对Flag进行哈希（加盐）
-func (r *ChallengeRepository) HashFlag(flag, challengeID string) string {
-	h := sha256.New()
-	h.Write([]byte(flag))
-	h.Write([]byte(challengeID)) // 使用challengeID作为盐值
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// VerifyFlag 验证Flag
-func (r *ChallengeRepository) VerifyFlag(submitted, challengeID, storedHash string) bool {
-	computedHash := r.HashFlag(submitted, challengeID)
-	return subtle.ConstantTimeCompare([]byte(computedHash), []byte(storedHash)) == 1
-}
+// 协作平台不需要验证Flag，直接明文存储（HashFlag/VerifyFlag 已移除）
 
 // MarkAsSolved 标记题目为已解决
 func (r *ChallengeRepository) MarkAsSolved(challengeID, solverID string) error {
@@ -330,7 +315,51 @@ func (r *ChallengeRepository) GetChallengeStats(channelID string) (map[string]in
 	return stats, nil
 }
 
+// CountAssignedToMember 统计分配给成员的题目数（协作平台）
+func (r *ChallengeRepository) CountAssignedToMember(memberID string) (int, error) {
+	var count int64
+
+	err := r.db.GetChannelDB().
+		Model(&models.ChallengeAssignment{}).
+		Where("member_id = ?", memberID).
+		Count(&count).Error
+
+	return int(count), err
+}
+
+// GetMemberContributionStats 获取成员贡献统计（协作平台：参与题目数）
+func (r *ChallengeRepository) GetMemberContributionStats(memberID string) (int, error) {
+	// 简化版：统计分配给该成员的题目数
+	return r.CountAssignedToMember(memberID)
+}
+
+// GetAllMembersContributionStats 批量获取所有成员的贡献统计（性能优化）
+func (r *ChallengeRepository) GetAllMembersContributionStats() (map[string]int, error) {
+	// 一次查询获取所有成员的参与题目数
+	var results []struct {
+		MemberID string
+		Count    int64
+	}
+
+	err := r.db.GetChannelDB().
+		Model(&models.ChallengeAssignment{}).
+		Select("member_id, COUNT(*) as count").
+		Group("member_id").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换为map
+	statsMap := make(map[string]int)
+	for _, r := range results {
+		statsMap[r.MemberID] = int(r.Count)
+	}
+
+	return statsMap, nil
+}
+
 // TODO: 实现以下方法
-// - GetMemberStats() 获取成员解题统计
 // - SearchChallenges() 搜索题目
-// - GetChallengeLeaderboard() 获取解题排行榜
+// - GetChallengeLeaderboard() 获取解题排行榜（如需要）

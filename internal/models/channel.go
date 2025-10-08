@@ -13,7 +13,7 @@ type Channel struct {
 	ParentChannelID string        `gorm:"type:text;index:idx_channels_parent" json:"parent_channel_id,omitempty"` // 如果为空则是主频道，否则是子频道
 	PasswordHash    string        `gorm:"type:text;not null" json:"-"`
 	Salt            []byte        `gorm:"type:blob;not null" json:"-"`
-	CreatedAt       time.Time     `gorm:"type:integer;not null" json:"created_at"`
+	CreatedAt       time.Time     `gorm:"not null" json:"created_at"`
 	CreatorID       string        `gorm:"type:text;not null" json:"creator_id"`
 	MaxMembers      int           `gorm:"type:integer;default:50" json:"max_members"`
 	TransportMode   TransportMode `gorm:"type:text;default:'auto'" json:"transport_mode"`
@@ -25,7 +25,7 @@ type Channel struct {
 	FileCount       int64         `gorm:"type:integer;default:0" json:"file_count"`
 	TotalTraffic    uint64        `gorm:"type:integer;default:0" json:"total_traffic"`
 	Metadata        JSONField     `gorm:"type:text" json:"metadata,omitempty"`
-	UpdatedAt       time.Time     `gorm:"type:integer;not null" json:"updated_at"`
+	UpdatedAt       time.Time     `gorm:"not null" json:"updated_at"`
 
 	// 运行时关联（不存储到数据库）
 	Members        []*Member        `gorm:"-" json:"members,omitempty"`
@@ -62,7 +62,7 @@ type PinnedMessage struct {
 	MessageID    string    `gorm:"type:text;not null;uniqueIndex:idx_channel_message" json:"message_id"`
 	PinnedBy     string    `gorm:"type:text;not null" json:"pinned_by"`
 	Reason       string    `gorm:"type:text" json:"reason,omitempty"`
-	PinnedAt     time.Time `gorm:"type:integer;not null" json:"pinned_at"`
+	PinnedAt     time.Time `gorm:"not null" json:"pinned_at"`
 	DisplayOrder int       `gorm:"type:integer;default:0;index:idx_pinned_channel" json:"display_order"`
 
 	// 关联

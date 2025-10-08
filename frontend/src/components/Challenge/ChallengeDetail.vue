@@ -150,7 +150,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { Empty, message } from 'ant-design-vue'
 import {
   TrophyOutlined,
@@ -163,6 +163,7 @@ import ChallengeAssign from './ChallengeAssign.vue'
 import ChallengeSubmit from './ChallengeSubmit.vue'
 import ChallengeProgress from './ChallengeProgress.vue'
 import ChallengeRoom from './ChallengeRoom.vue'
+import { getChallengeProgress, getChallengeSubmissions } from '@/api/app'
 
 const props = defineProps({
   challenge: {
@@ -182,6 +183,66 @@ const localProgress = ref(props.challenge.progress || 0)
 // 真实数据（从后端加载）
 const progressData = ref([])
 const submissions = ref([])
+const loading = ref(false)
+
+// 加载题目进度数据
+const loadProgressData = async () => {
+  if (!props.challenge?.id) return
+  loading.value = true
+  try {
+    const data = await getChallengeProgress(props.challenge.id)
+    console.log('Loaded challenge progress:', data)
+    if (Array.isArray(data)) {
+      progressData.value = data.map(p => ({
+        member: p.member_name || p.MemberName || 'Unknown',
+        progress: p.progress || 0,
+        status: p.status || 'pending',
+        lastUpdate: p.last_update ? new Date(p.last_update * 1000) : new Date()
+      }))
+    }
+  } catch (error) {
+    console.error('Failed to load progress data:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 加载提交记录
+const loadSubmissions = async () => {
+  if (!props.challenge?.id) return
+  loading.value = true
+  try {
+    const data = await getChallengeSubmissions(props.challenge.id)
+    console.log('Loaded submissions:', data)
+    if (Array.isArray(data)) {
+      submissions.value = data.map(s => ({
+        id: s.id || s.ID,
+        member: s.member_name || s.MemberName || 'Unknown',
+        flag: s.flag || '',
+        correct: s.correct || false,
+        submitTime: s.submit_time ? new Date(s.submit_time * 1000) : new Date()
+      }))
+    }
+  } catch (error) {
+    console.error('Failed to load submissions:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 组件挂载时加载数据
+onMounted(() => {
+  loadProgressData()
+  loadSubmissions()
+})
+
+// 当题目变化时重新加载数据
+watch(() => props.challenge?.id, () => {
+  if (props.challenge?.id) {
+    loadProgressData()
+    loadSubmissions()
+  }
+})
 
 const getCategoryColor = (category) => {
   const colors = {

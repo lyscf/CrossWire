@@ -1,6 +1,8 @@
 package client
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -191,6 +193,22 @@ func (rm *ReceiveManager) handleJoinResponse(payload map[string]interface{}) {
 
 // handleDataMessage 处理数据消息
 func (rm *ReceiveManager) handleDataMessage(data []byte) {
+	// 1) 首先尝试解析为通用payload以识别文件相关消息
+	var generic map[string]interface{}
+	if err := json.Unmarshal(data, &generic); err == nil {
+		if t, ok := generic["type"].(string); ok {
+			switch t {
+			case "file.metadata":
+				rm.handleFileMetadata(generic)
+				return
+			case "file.chunk":
+				rm.handleFileChunk(generic)
+				return
+			}
+		}
+	}
+
+	// 2) 否则按普通聊天消息处理（兼容旧格式）
 	var msg models.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
 		rm.client.logger.Error("[ReceiveManager] Failed to unmarshal message: %v", err)
@@ -283,9 +301,200 @@ func (rm *ReceiveManager) handleControlMessage(data []byte) {
 		// 成员离开通知
 		rm.handleMemberLeft(payload)
 
+	case "file.request":
+		// 文件下载请求
+		rm.handleFileRequest(payload)
+
+	case "file.complete":
+		// 文件上传完成通知
+		rm.handleFileComplete(payload)
+
 	default:
 		rm.client.logger.Debug("[ReceiveManager] Unknown control message: %s", msgType)
 	}
+}
+
+// ===== 文件消息处理 =====
+
+// handleFileMetadata 处理文件元数据
+func (rm *ReceiveManager) handleFileMetadata(data map[string]interface{}) {
+	fileID, _ := data["file_id"].(string)
+	filename, _ := data["filename"].(string)
+	sizeFloat, _ := data["size"].(float64)
+	sha256Hex, _ := data["sha256"].(string)
+	chunkSizeFloat, _ := data["chunk_size"].(float64)
+	totalChunksFloat, _ := data["total_chunks"].(float64)
+
+	size := int64(sizeFloat)
+	chunkSize := int(chunkSizeFloat)
+	totalChunks := int(totalChunksFloat)
+
+	rm.client.logger.Info("[ReceiveManager] File metadata received: %s (%s, %d bytes, %d chunks)",
+		fileID, filename, size, totalChunks)
+
+	// 创建或更新文件记录
+	fileRecord := &models.File{
+		ID:             fileID,
+		MessageID:      fileID,
+		ChannelID:      rm.client.config.ChannelID,
+		SenderID:       "",
+		Filename:       filename,
+		OriginalName:   filename,
+		Size:           size,
+		MimeType:       "application/octet-stream",
+		StorageType:    models.StorageFile,
+		StoragePath:    "",
+		SHA256:         sha256Hex,
+		Checksum:       "",
+		ChunkSize:      chunkSize,
+		TotalChunks:    totalChunks,
+		UploadedChunks: 0,
+		UploadStatus:   models.UploadStatusUploading,
+		UploadedAt:     time.Now(),
+		ExpiresAt:      time.Time{},
+		Encrypted:      true,
+	}
+
+	if existing, err := rm.client.fileRepo.GetByID(fileID); err == nil && existing != nil {
+		// 更新基本字段
+		existing.Filename = filename
+		existing.Size = size
+		existing.SHA256 = sha256Hex
+		existing.ChunkSize = chunkSize
+		existing.TotalChunks = totalChunks
+		existing.UploadStatus = models.UploadStatusUploading
+		_ = rm.client.fileRepo.Update(existing)
+	} else {
+		_ = rm.client.fileRepo.Create(fileRecord)
+	}
+
+	// 发布上传开始/进度事件（0%）
+	rm.client.eventBus.Publish(events.EventFileDownloadStarted, events.FileEvent{
+		File:       fileRecord,
+		ChannelID:  rm.client.config.ChannelID,
+		UploaderID: "",
+		Progress:   0,
+	})
+}
+
+// handleFileChunk 处理文件分块
+func (rm *ReceiveManager) handleFileChunk(data map[string]interface{}) {
+	fileID, _ := data["file_id"].(string)
+	chunkIndex := int(getFloat(data, "chunk_index"))
+	totalChunks := int(getFloat(data, "total_chunks"))
+	checksum, _ := data["checksum"].(string)
+
+	// Base64 解码分块数据
+	chunkDataB64, _ := data["data"].(string)
+	chunkData, err := base64.StdEncoding.DecodeString(chunkDataB64)
+	if err != nil {
+		rm.client.logger.Error("[ReceiveManager] Failed to decode chunk data: %v", err)
+		return
+	}
+
+	// 校验分块哈希
+	actualChecksum := fmt.Sprintf("%x", sha256.Sum256(chunkData))
+	if checksum != "" && actualChecksum != checksum {
+		rm.client.logger.Error("[ReceiveManager] Chunk checksum mismatch: %s != %s", actualChecksum, checksum)
+		return
+	}
+
+	// 查找对应下载任务
+	task, ok := rm.client.fileManager.GetDownloadTaskByFileID(fileID)
+	if !ok {
+		rm.client.logger.Debug("[ReceiveManager] No download task for file %s, ignoring chunk", fileID)
+		return
+	}
+
+	// 添加分块
+	task.chunksMutex.Lock()
+	if task.chunks == nil {
+		task.chunks = make(map[int][]byte)
+	}
+	task.chunks[chunkIndex] = chunkData
+	task.ReceivedChunks = len(task.chunks)
+	task.chunksMutex.Unlock()
+
+	// 触发回调
+	if task.OnProgress != nil {
+		task.OnProgress(task)
+	}
+
+	// 发布下载进度事件
+	progress := int(float64(task.ReceivedChunks) / float64(maxInt(task.TotalChunks, 1)) * 100)
+	var filePtr *models.File
+	if f, err := rm.client.fileRepo.GetByID(fileID); err == nil {
+		filePtr = f
+	}
+
+	rm.client.eventBus.Publish(events.EventFileDownloadProgress, events.FileEvent{
+		File:       filePtr,
+		ChannelID:  rm.client.config.ChannelID,
+		UploaderID: "",
+		Progress:   progress,
+	})
+
+	rm.client.logger.Debug("[ReceiveManager] File download progress: %s [%d/%d] (%d%%)",
+		fileID, task.ReceivedChunks, totalChunks, progress)
+}
+
+// handleFileComplete 处理文件完成消息
+func (rm *ReceiveManager) handleFileComplete(data map[string]interface{}) {
+	fileID, _ := data["file_id"].(string)
+
+	// 更新文件状态
+	if file, err := rm.client.fileRepo.GetByID(fileID); err == nil && file != nil {
+		file.UploadStatus = models.UploadStatusCompleted
+		_ = rm.client.fileRepo.Update(file)
+		rm.client.eventBus.Publish(events.EventFileDownloadCompleted, events.FileEvent{
+			File:       file,
+			ChannelID:  rm.client.config.ChannelID,
+			UploaderID: "",
+			Progress:   100,
+		})
+	}
+
+	rm.client.logger.Info("[ReceiveManager] File upload completed (sender): %s", fileID)
+}
+
+// handleFileRequest 处理文件下载请求（对端请求我重新上传）
+func (rm *ReceiveManager) handleFileRequest(data map[string]interface{}) {
+	fileID, _ := data["file_id"].(string)
+	requesterID, _ := data["requester_id"].(string)
+
+	rm.client.logger.Info("[ReceiveManager] File request from %s: %s", requesterID, fileID)
+
+	file, err := rm.client.fileRepo.GetByID(fileID)
+	if err != nil || file == nil {
+		rm.client.logger.Error("[ReceiveManager] Requested file not found: %s", fileID)
+		return
+	}
+
+	if file.StoragePath == "" {
+		rm.client.logger.Error("[ReceiveManager] File has no local path: %s", fileID)
+		return
+	}
+
+	go func() {
+		if _, err := rm.client.fileManager.UploadFile(file.StoragePath); err != nil {
+			rm.client.logger.Error("[ReceiveManager] Failed to respond to file request: %v", err)
+		}
+	}()
+}
+
+// 工具函数
+func getFloat(m map[string]interface{}, key string) float64 {
+	if v, ok := m[key].(float64); ok {
+		return v
+	}
+	return 0
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // handleMemberStatus 处理成员状态更新

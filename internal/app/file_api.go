@@ -1,9 +1,13 @@
 package app
 
 import (
+	"crosswire/internal/events"
 	"crosswire/internal/models"
+	"encoding/base64"
+	"mime"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ==================== 文件操作 API ====================
@@ -226,6 +230,61 @@ func (a *App) GetFile(fileID string) Response {
 	return NewSuccessResponse(dto)
 }
 
+// GetFileContent 获取可预览的文件内容（文本/图片等）
+// 文本类直接返回字符串；图片等返回 data URL（base64）
+func (a *App) GetFileContent(fileID string) Response {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	file, err := a.db.FileRepo().GetByID(fileID)
+	if err != nil || file == nil {
+		return NewErrorResponse("not_found", "文件不存在", "")
+	}
+
+	// 优先使用存储路径
+	var data []byte
+	if file.StorageType == models.StorageFile && file.StoragePath != "" {
+		b, err := os.ReadFile(file.StoragePath)
+		if err != nil {
+			return NewErrorResponse("read_error", "读取文件失败", err.Error())
+		}
+		data = b
+	} else if len(file.Data) > 0 {
+		data = file.Data
+	} else {
+		return NewErrorResponse("empty", "文件内容为空", "")
+	}
+
+	mt := file.MimeType
+	if mt == "" {
+		mt = mime.TypeByExtension(filepath.Ext(file.Filename))
+	}
+	if strings.HasPrefix(mt, "text/") || strings.Contains(mt, "json") || strings.Contains(mt, "xml") {
+		return NewSuccessResponse(map[string]interface{}{
+			"mode": "text",
+			"mime": mt,
+			"text": string(data),
+			"name": file.Filename,
+			"size": file.Size,
+		})
+	}
+
+	// 其他类型转为 data URL（便于前端 img/pdf viewer 预览）
+	b64 := base64.StdEncoding.EncodeToString(data)
+	dataURL := "data:" + mt + ";base64," + b64
+	return NewSuccessResponse(map[string]interface{}{
+		"mode":    "dataurl",
+		"mime":    mt,
+		"dataUrl": dataURL,
+		"name":    file.Filename,
+		"size":    file.Size,
+	})
+}
+
 // GetFileProgress 获取文件传输进度
 func (a *App) GetFileProgress(fileID string) Response {
 	a.mu.RLock()
@@ -255,12 +314,12 @@ func (a *App) GetFileProgress(fileID string) Response {
 				Status:      string(uploadTask.Status),
 			}
 		} else {
-			if downloadTask, ok := cli.GetDownloadTask(fileID); ok && downloadTask != nil {
+			if downloadTask, ok := cli.GetDownloadTaskByFileID(fileID); ok && downloadTask != nil {
 				progress = &FileTransferProgress{
 					FileID:      fileID,
 					FileName:    downloadTask.Filename,
 					TotalSize:   downloadTask.Size,
-					Transferred: 0,
+					Transferred: int64(downloadTask.ReceivedChunks) * int64(downloadTask.ChunkSize),
 					Progress:    int(downloadTask.GetProgress() * 100),
 					Speed:       0,
 					Status:      string(downloadTask.Status),
@@ -312,6 +371,80 @@ func (a *App) GetFileTransferStats() Response {
 	}
 
 	return NewSuccessResponse(stats)
+}
+
+// DeleteFile 删除文件
+func (a *App) DeleteFile(fileID string) Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	if fileID == "" {
+		return NewErrorResponse("invalid_request", "文件ID不能为空", "")
+	}
+
+	a.logger.Info("Deleting file: %s", fileID)
+
+	// 1. 读取文件
+	file, err := a.db.FileRepo().GetByID(fileID)
+	if err != nil || file == nil {
+		return NewErrorResponse("not_found", "文件不存在", err.Error())
+	}
+
+	// 2. 权限检查：上传者或管理员
+	var currentUserID string
+	var isAdmin bool
+
+	if mode == ModeServer && srv != nil {
+		currentUserID = "server"
+		isAdmin = true
+	} else if mode == ModeClient && cli != nil {
+		currentUserID = cli.GetMemberID()
+		member, _ := a.db.MemberRepo().GetByID(currentUserID)
+		isAdmin = (member != nil && member.Role == models.RoleAdmin)
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	if file.SenderID != currentUserID && !isAdmin {
+		return NewErrorResponse("permission_denied", "仅上传者或管理员可删除文件", "")
+	}
+
+	// 3. 处理物理文件
+	switch file.StorageType {
+	case models.StorageFile:
+		if file.StoragePath != "" {
+			if err := os.Remove(file.StoragePath); err != nil {
+				a.logger.Warn("Failed to delete physical file: %v", err)
+			}
+		}
+	default:
+		// 其他存储类型由数据库删除处理
+	}
+
+	// 4. 删除数据库记录（级联删除分块）
+	if err := a.db.FileRepo().Delete(fileID); err != nil {
+		return NewErrorResponse("delete_error", "删除文件记录失败", err.Error())
+	}
+
+	// 5. 广播文件删除事件
+	a.eventBus.Publish(events.EventFileDeleted, map[string]interface{}{
+		"file_id":  fileID,
+		"filename": file.Filename,
+	})
+
+	a.logger.Info("File deleted: %s", fileID)
+
+	return NewSuccessResponse(map[string]interface{}{
+		"message": "文件已删除",
+		"file_id": fileID,
+	})
 }
 
 // ==================== 辅助方法 ====================

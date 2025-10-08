@@ -28,12 +28,12 @@ type Member struct {
 	IsOnline   bool      `gorm:"type:integer;default:0;index:idx_members_online" json:"is_online"`
 	IsMuted    bool      `gorm:"type:integer;default:0;index:idx_members_muted" json:"is_muted"`
 	IsBanned   bool      `gorm:"type:integer;default:0;index:idx_members_banned" json:"is_banned"`
-	JoinTime   time.Time `gorm:"type:integer;not null" json:"join_time"`
-	LastSeenAt time.Time `gorm:"type:integer;not null" json:"last_seen_at"`
+	JoinTime   time.Time `gorm:"not null" json:"join_time"`
+	LastSeenAt time.Time `gorm:"not null" json:"last_seen_at"`
 
 	// 原有时间字段
-	JoinedAt      time.Time `gorm:"type:integer;not null" json:"joined_at"`
-	LastHeartbeat time.Time `gorm:"type:integer;not null" json:"last_heartbeat"`
+	JoinedAt      time.Time `gorm:"not null" json:"joined_at"`
+	LastHeartbeat time.Time `gorm:"not null" json:"last_heartbeat"`
 	Metadata      JSONField `gorm:"type:text" json:"metadata,omitempty"`
 
 	// 关联
@@ -80,17 +80,17 @@ func (m *Member) AfterFind(tx *gorm.DB) error {
 
 // MuteRecord 禁言记录
 type MuteRecord struct {
-	ID        string     `gorm:"primaryKey;type:text" json:"id"`
-	ChannelID string     `gorm:"type:text;not null;index:idx_mute_channel" json:"channel_id"`
-	MemberID  string     `gorm:"type:text;not null;index:idx_mute_member" json:"member_id"`
-	MutedBy   string     `gorm:"type:text;not null" json:"muted_by"`
-	Reason    string     `gorm:"type:text" json:"reason,omitempty"`
-	MutedAt   time.Time  `gorm:"type:integer;not null" json:"muted_at"`
-	Duration  *int64     `gorm:"type:integer" json:"duration,omitempty"` // 秒数，NULL=永久
-	ExpiresAt *time.Time `gorm:"type:integer;index:idx_mute_expires" json:"expires_at,omitempty"`
-	Active    bool       `gorm:"type:integer;default:1;index:idx_mute_active" json:"active"`
-	UnmutedAt *time.Time `gorm:"type:integer" json:"unmuted_at,omitempty"`
-	UnmutedBy string     `gorm:"type:text" json:"unmuted_by,omitempty"`
+	ID        string    `gorm:"primaryKey;type:text" json:"id"`
+	ChannelID string    `gorm:"type:text;not null;index:idx_mute_channel" json:"channel_id"`
+	MemberID  string    `gorm:"type:text;not null;index:idx_mute_member" json:"member_id"`
+	MutedBy   string    `gorm:"type:text;not null" json:"muted_by"`
+	Reason    string    `gorm:"type:text" json:"reason,omitempty"`
+	MutedAt   time.Time `gorm:"not null" json:"muted_at"`
+	Duration  *int64    `gorm:"type:integer" json:"duration,omitempty"` // 秒数，NULL=永久
+	ExpiresAt time.Time `gorm:"index:idx_mute_expires" json:"expires_at,omitempty"`
+	Active    bool      `gorm:"type:integer;default:1;index:idx_mute_active" json:"active"`
+	UnmutedAt time.Time `json:"unmuted_at,omitempty"`
+	UnmutedBy string    `gorm:"type:text" json:"unmuted_by,omitempty"`
 
 	// 关联
 	Channel *Channel `gorm:"foreignKey:ChannelID;constraint:OnDelete:CASCADE" json:"-"`
@@ -112,8 +112,8 @@ func (m *MuteRecord) BeforeCreate(tx *gorm.DB) error {
 
 // IsExpired 检查是否过期
 func (m *MuteRecord) IsExpired() bool {
-	if m.ExpiresAt == nil {
+	if m.ExpiresAt.IsZero() {
 		return false // 永久禁言
 	}
-	return time.Now().After(*m.ExpiresAt)
+	return time.Now().After(m.ExpiresAt)
 }

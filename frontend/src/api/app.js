@@ -44,8 +44,9 @@ export async function discoverServers(timeoutSec = 5) {
 }
 
 // 消息
-export async function sendMessage(content, type = 'text', replyToId = null) {
+export async function sendMessage(content, type = 'text', channelId = null, replyToId = null) {
   const payload = { content, type }
+  if (channelId) payload.channel_id = channelId
   if (replyToId) payload.reply_to_id = replyToId
   const res = await App.SendMessage(payload)
   return unwrap(res)
@@ -61,13 +62,18 @@ export async function getMessages(limit = 50, offset = 0) {
   return unwrap(res)
 }
 
+export async function getMessagesByChannel(channelId, limit = 50, offset = 0) {
+  const res = await App.GetMessagesByChannel(channelId, limit, offset)
+  return unwrap(res)
+}
+
 export async function getMessage(messageId) {
   const res = await App.GetMessage(messageId)
   return unwrap(res)
 }
 
-export async function searchMessages(keyword, limit = 50, offset = 0) {
-  const res = await App.SearchMessages({ keyword, limit, offset })
+export async function searchMessages(query, limit = 50, offset = 0) {
+  const res = await App.SearchMessages({ query, limit, offset })
   return unwrap(res)
 }
 
@@ -94,17 +100,23 @@ export async function getSubChannels() {
 
 // 成员
 export async function getMembers() {
+  console.log('[API] Calling GetMembers...')
   const res = await App.GetMembers()
+  console.log('[API] GetMembers response:', res)
   return unwrap(res)
 }
 
 export async function getMember(memberId) {
+  console.log('[API] Calling GetMember with ID:', memberId)
   const res = await App.GetMember(memberId)
+  console.log('[API] GetMember response:', res)
   return unwrap(res)
 }
 
 export async function getMyInfo() {
+  console.log('[API] Calling GetMyInfo...')
   const res = await App.GetMyInfo()
+  console.log('[API] GetMyInfo response:', res)
   return unwrap(res)
 }
 
@@ -130,7 +142,9 @@ export async function getUserProfile() {
 }
 
 export async function updateUserProfile(profile) {
+  console.log('[API] Calling UpdateUserProfile with:', profile)
   const res = await App.UpdateUserProfile(profile)
+  console.log('[API] UpdateUserProfile response:', res)
   return unwrap(res)
 }
 
@@ -206,8 +220,10 @@ export async function updateChallengeProgress(challengeId, progress) {
 }
 
 // 文件
-export async function uploadFile(file) {
-  const res = await App.UploadFile(file)
+export async function uploadFile(input) {
+  // 兼容字符串/对象两种传参，规范化为 { file_path }
+  const payload = typeof input === 'string' ? { file_path: input } : input
+  const res = await App.UploadFile(payload)
   return unwrap(res)
 }
 
@@ -216,9 +232,17 @@ export async function getFiles(limit = 50, offset = 0) {
   return unwrap(res)
 }
 
-export async function downloadFile(fileId) {
-  const res = await App.DownloadFile(fileId)
-  return unwrap(res)
+export async function downloadFile(fileId, savePath = null, defaultFilename = null) {
+  if (!savePath) {
+    const title = '选择保存位置'
+    const def = defaultFilename || `file_${fileId}`
+    const sp = await App.SaveFileDialog(title, def)
+    savePath = unwrap(sp)
+    if (!savePath) throw new Error('用户取消下载')
+  }
+  const res = await App.DownloadFile({ file_id: fileId, save_path: savePath })
+  const data = unwrap(res)
+  return { ...data, savePath }
 }
 
 export async function deleteFile(fileId) {
@@ -228,6 +252,11 @@ export async function deleteFile(fileId) {
 
 export async function getFile(fileId) {
   const res = await App.GetFile(fileId)
+  return unwrap(res)
+}
+
+export async function getFileContent(fileId) {
+  const res = await App.GetFileContent(fileId)
   return unwrap(res)
 }
 
@@ -278,7 +307,7 @@ export async function unbanMember(memberId) {
 }
 
 // 频道管理
-export async function pinMessage(messageId, reason) {
+export async function pinMessage(messageId, reason = '') {
   const res = await App.PinMessage({ message_id: messageId, reason })
   return unwrap(res)
 }
@@ -290,6 +319,79 @@ export async function unpinMessage(messageId) {
 
 export async function getPinnedMessages() {
   const res = await App.GetPinnedMessages()
+  return unwrap(res)
+}
+
+// 系统功能
+export async function getNetworkStats() {
+  const res = await App.GetNetworkStats()
+  return unwrap(res)
+}
+
+export async function testConnection(serverAddress, mode, timeout = 5) {
+  const res = await App.TestConnection(serverAddress, mode, timeout)
+  return unwrap(res)
+}
+
+export async function getRecentChannels() {
+  const res = await App.GetRecentChannels()
+  return unwrap(res)
+}
+
+export async function exportData(exportPath, options) {
+  const res = await App.ExportData(exportPath, options)
+  return unwrap(res)
+}
+
+export async function importData(importPath) {
+  const res = await App.ImportData(importPath)
+  return unwrap(res)
+}
+
+export async function getLogs(limit = 100) {
+  const res = await App.GetLogs(limit)
+  return unwrap(res)
+}
+
+export async function clearLogs() {
+  const res = await App.ClearLogs()
+  return unwrap(res)
+}
+
+// 文件对话框
+export async function selectFile(title, filter) {
+  const res = await App.SelectFile(title, filter)
+  return unwrap(res)
+}
+
+export async function selectDirectory(title) {
+  const res = await App.SelectDirectory(title)
+  return unwrap(res)
+}
+
+export async function saveFileDialog(title, defaultFilename) {
+  const res = await App.SaveFileDialog(title, defaultFilename)
+  return unwrap(res)
+}
+
+// 客户端模式
+export async function getClientStatus() {
+  const res = await App.GetClientStatus()
+  return unwrap(res)
+}
+
+export async function stopClient() {
+  const res = await App.StopClientMode()
+  return unwrap(res)
+}
+
+export async function stopServer() {
+  const res = await App.StopServerMode()
+  return unwrap(res)
+}
+
+export async function getDiscoveredServers() {
+  const res = await App.GetDiscoveredServers()
   return unwrap(res)
 }
 

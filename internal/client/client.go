@@ -53,7 +53,6 @@ type Client struct {
 	mutex         sync.RWMutex
 	startTime     time.Time
 	memberID      string // 本地成员ID
-	serverID      string // 服务端ID（频道ID）
 	lastSeenMsgID string // 最后接收的消息ID
 
 	// 密钥对（用于消息签名）
@@ -277,6 +276,9 @@ func (c *Client) Start() error {
 		return fmt.Errorf("failed to start challenge manager: %w", err)
 	}
 
+	// 9. 启动心跳（状态上报）
+	go c.startHeartbeat()
+
 	c.logger.Info("[Client] Client started successfully")
 
 	return nil
@@ -449,14 +451,39 @@ func (c *Client) SendMessage(content string, msgType models.MessageType) error {
 	// TODO: 根据msgType构造不同的MessageContent
 	// 暂时简化处理
 
+	// 代理到默认频道
+	return c.SendMessageToChannel(content, msgType, c.config.ChannelID)
+}
+
+// SendMessageToChannel 发送消息到指定频道
+func (c *Client) SendMessageToChannel(content string, msgType models.MessageType, channelID string) error {
+	if !c.isRunning {
+		return fmt.Errorf("client is not running")
+	}
+
 	// 构造消息
 	msg := &models.Message{
 		ID:        generateMessageID(),
-		ChannelID: c.config.ChannelID,
+		ChannelID: channelID,
 		SenderID:  c.memberID,
 		Type:      msgType,
-		// Content:   content,
 		Timestamp: time.Now(),
+	}
+
+	// 根据类型填充内容（简化：仅文本）
+	if msgType == models.MessageTypeText {
+		msg.Content = models.MessageContent{
+			"text":   content,
+			"format": "plain",
+		}
+		msg.ContentText = content
+	}
+
+	// 如果是子频道，推断room_type/challenge_id（保持兼容，不强制）
+	if channelID != c.config.ChannelID {
+		msg.RoomType = "challenge"
+	} else {
+		msg.RoomType = "main"
 	}
 
 	// 1. 序列化消息
@@ -506,9 +533,135 @@ func (c *Client) SendMessage(content string, msgType models.MessageType) error {
 	c.stats.BytesSent += uint64(len(encrypted))
 	c.stats.mutex.Unlock()
 
-	c.logger.Debug("[Client] Signed message sent: %s", msg.ID)
+	c.logger.Debug("[Client] Signed message sent: %s to channel: %s", msg.ID, channelID)
 
 	return nil
+}
+
+// SendReaction 发送消息反应（添加）
+func (c *Client) SendReaction(messageID, emoji string) error {
+	if !c.isRunning {
+		return fmt.Errorf("client is not running")
+	}
+	if messageID == "" || emoji == "" {
+		return fmt.Errorf("invalid reaction params")
+	}
+
+	// 构造反应消息
+	msg := &models.Message{
+		ID:        generateMessageID(),
+		ChannelID: c.config.ChannelID,
+		SenderID:  c.memberID,
+		Type:      models.MessageTypeReaction,
+		Timestamp: time.Now(),
+		Content: models.MessageContent{
+			"message_id": messageID,
+			"emoji":      emoji,
+			"action":     "add",
+		},
+	}
+
+	// 序列化
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal reaction message: %w", err)
+	}
+
+	// 签名
+	signature := ed25519.Sign(c.privateKey, msgJSON)
+	signedMsg := &SignedMessage{
+		Message:   msgJSON,
+		Signature: signature,
+		SenderID:  c.memberID,
+	}
+
+	// 加密
+	signedJSON, err := json.Marshal(signedMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal signed reaction: %w", err)
+	}
+	encrypted, err := c.crypto.EncryptMessage(signedJSON)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt reaction: %w", err)
+	}
+
+	// 发送
+	transportMsg := &transport.Message{
+		Type:      transport.MessageTypeData,
+		SenderID:  c.memberID,
+		Payload:   encrypted,
+		Timestamp: time.Now(),
+	}
+	if err := c.transport.SendMessage(transportMsg); err != nil {
+		return fmt.Errorf("failed to send reaction: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveReactionNetwork 移除消息反应（网络）
+func (c *Client) RemoveReactionNetwork(messageID, emoji string) error {
+	if !c.isRunning {
+		return fmt.Errorf("client is not running")
+	}
+	if messageID == "" || emoji == "" {
+		return fmt.Errorf("invalid reaction params")
+	}
+
+	msg := &models.Message{
+		ID:        generateMessageID(),
+		ChannelID: c.config.ChannelID,
+		SenderID:  c.memberID,
+		Type:      models.MessageTypeReaction,
+		Timestamp: time.Now(),
+		Content: models.MessageContent{
+			"message_id": messageID,
+			"emoji":      emoji,
+			"action":     "remove",
+		},
+	}
+
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal reaction remove: %w", err)
+	}
+	signature := ed25519.Sign(c.privateKey, msgJSON)
+	signedMsg := &SignedMessage{Message: msgJSON, Signature: signature, SenderID: c.memberID}
+	signedJSON, err := json.Marshal(signedMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal signed reaction remove: %w", err)
+	}
+	encrypted, err := c.crypto.EncryptMessage(signedJSON)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt reaction remove: %w", err)
+	}
+	transportMsg := &transport.Message{Type: transport.MessageTypeData, SenderID: c.memberID, Payload: encrypted, Timestamp: time.Now()}
+	if err := c.transport.SendMessage(transportMsg); err != nil {
+		return fmt.Errorf("failed to send reaction remove: %w", err)
+	}
+	return nil
+}
+
+// startHeartbeat 周期性发送状态更新作为心跳
+func (c *Client) startHeartbeat() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			if !c.IsRunning() || c.memberID == "" {
+				continue
+			}
+			// 获取当前状态，默认online
+			status := models.StatusOnline
+			if member, err := c.memberRepo.GetByID(c.memberID); err == nil && member != nil {
+				status = member.Status
+			}
+			_ = c.UpdateStatus(status)
+		}
+	}
 }
 
 // GetMessages 获取消息列表
@@ -703,6 +856,11 @@ func (c *Client) GetUploadTask(taskID string) (*FileUploadTask, bool) {
 // GetDownloadTask 获取下载任务
 func (c *Client) GetDownloadTask(taskID string) (*FileDownloadTask, bool) {
 	return c.fileManager.GetDownloadTask(taskID)
+}
+
+// GetDownloadTaskByFileID 获取下载任务（按文件ID）
+func (c *Client) GetDownloadTaskByFileID(fileID string) (*FileDownloadTask, bool) {
+	return c.fileManager.GetDownloadTaskByFileID(fileID)
 }
 
 // GetFileManagerStats 获取文件管理器统计

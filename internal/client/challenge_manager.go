@@ -153,7 +153,7 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 		return fmt.Errorf("failed to send submission: %w", err)
 	}
 
-	// 记录提交
+	// 记录提交（协作平台：所有提交都有效）
 	cm.submissionsMutex.Lock()
 	cm.submissions[challengeID] = &models.ChallengeSubmission{
 		ID:          uuid.New().String(),
@@ -161,7 +161,6 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 		MemberID:    cm.client.memberID,
 		Flag:        flag,
 		SubmittedAt: time.Now(),
-		IsCorrect:   false, // 等待服务器响应
 	}
 	cm.submissionsMutex.Unlock()
 
@@ -322,16 +321,14 @@ func (cm *ChallengeManager) handleChallengeSolved(event *events.Event) {
 		if challengeEvent.UserID != "" {
 			challenge.SolvedBy = append(challenge.SolvedBy, challengeEvent.UserID)
 		}
-		now := time.Now()
-		challenge.SolvedAt = &now
+		challenge.SolvedAt = time.Now()
 	}
 	cm.challengesMutex.Unlock()
 
-	// 更新提交记录
+	// 更新提交记录（协作平台：无需验证正确性）
 	cm.submissionsMutex.Lock()
-	if submission, ok := cm.submissions[challengeEvent.Challenge.ID]; ok {
-		submission.IsCorrect = true
-	}
+	// 记录已提交（所有提交都有效）
+	_ = cm.submissions[challengeEvent.Challenge.ID]
 	cm.submissionsMutex.Unlock()
 
 	// 更新统计

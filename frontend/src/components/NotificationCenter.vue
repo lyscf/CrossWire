@@ -140,8 +140,11 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Empty } from 'ant-design-vue'
+import { EventsOn } from '@/wailsjs/runtime/runtime'
+import { getMyInfo } from '@/api/app'
+import { useChallengeStore } from '@/stores/challenge'
 import {
   BellOutlined,
   UserOutlined,
@@ -154,14 +157,136 @@ import {
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
+// 可选：后续可接入通知历史 API
+// import { getNotifications } from '@/api/app'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
 
 const activeTab = ref('all')
+// Stores
+const challengeStore = useChallengeStore()
 
-// 通知数据（从后端加载）
+
+// 通知数据（通过Wails事件 EventsOn('app:event') 接收）
 const notifications = ref([])
+const myId = ref('')
+
+const addNotification = (n) => {
+  notifications.value.unshift(n)
+  if (notifications.value.length > 50) {
+    notifications.value = notifications.value.slice(0, 50)
+  }
+  try {
+    localStorage.setItem('notifications', JSON.stringify(notifications.value))
+  } catch {}
+}
+
+const loadNotifications = () => {
+  try {
+    const raw = localStorage.getItem('notifications')
+    if (raw) notifications.value = JSON.parse(raw)
+  } catch {}
+}
+
+// 组件挂载时初始化
+onMounted(async () => {
+  loadNotifications()
+  try {
+    const me = await getMyInfo()
+    myId.value = me?.id || me?.ID || ''
+  } catch {}
+
+  // 订阅后端统一事件入口
+  EventsOn('app:event', (evt) => {
+    if (!evt) return
+    const type = evt.type || evt.Type
+    const data = evt.data || evt.Data || {}
+    // 题目进度更新
+    if (type === 'challenge:progress') {
+      const ch = data.challenge || data.Challenge || {}
+      const challengeId = ch.id || ch.ID || data.challenge_id || data.ChallengeID
+      const extra = data.extra_data || data.ExtraData || {}
+      const progressValue = Number(extra.progress || extra.Progress || 0)
+      if (challengeId) {
+        try {
+          challengeStore.updateProgress(challengeId, progressValue)
+          // 可选：通知提示
+          addNotification({
+            id: Date.now().toString(),
+            type: 'system',
+            title: '进度更新',
+            description: `题目进度: ${progressValue}%`,
+            timestamp: Date.now(),
+            read: false
+          })
+        } catch {}
+      }
+      return
+    }
+
+
+    // 消息接收：检测@提及
+    if (type === 'message:received') {
+      const msg = data.message || data.Message || {}
+      const mentions = msg.mentions || msg.Mentions || []
+      const contentText = msg.content_text || msg.ContentText || msg.content?.text || ''
+      if (myId.value && Array.isArray(mentions) && mentions.includes(myId.value)) {
+        addNotification({
+          id: Date.now().toString(),
+          type: 'mention',
+          title: `${msg.sender_nickname || '有人'} 提到了你`,
+          description: contentText,
+          timestamp: Date.now(),
+          read: false,
+          link: `/channel/${msg.channel_id || ''}`
+        })
+      }
+      return
+    }
+
+    // 题目分配
+    if (type === 'challenge:assigned') {
+      const ch = data.challenge || data.Challenge || {}
+      const title = ch.title || ch.Title || '新题目'
+      addNotification({
+        id: Date.now().toString(),
+        type: 'challenge',
+        title: '新题目分配',
+        description: `管理员为你分配了题目: ${title}`,
+        timestamp: Date.now(),
+        read: false,
+        link: `/challenges`
+      })
+      return
+    }
+
+    // Flag提交
+    if (type === 'challenge:submitted') {
+      addNotification({
+        id: Date.now().toString(),
+        type: 'flag',
+        title: 'Flag已提交',
+        description: data?.message || data?.Message || '已提交',
+        timestamp: Date.now(),
+        read: false
+      })
+      return
+    }
+
+    // 系统类
+    if (type?.startsWith('system:')) {
+      addNotification({
+        id: Date.now().toString(),
+        type: 'system',
+        title: '系统通知',
+        description: (data && (data.message || data.Message)) || type,
+        timestamp: Date.now(),
+        read: false
+      })
+    }
+  })
+})
 
 const allNotifications = computed(() => notifications.value)
 

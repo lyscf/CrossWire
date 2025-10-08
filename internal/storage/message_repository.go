@@ -104,8 +104,6 @@ func (r *MessageRepository) GetChallengeMessages(challengeID string, limit int) 
 
 // Update 更新消息
 func (r *MessageRepository) Update(message *models.Message) error {
-	now := time.Now()
-	message.EditedAt = &now
 	return r.db.GetChannelDB().Save(message).Error
 }
 

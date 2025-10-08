@@ -34,6 +34,10 @@ export function DeleteChallenge(arg1) {
   return window['go']['app']['App']['DeleteChallenge'](arg1);
 }
 
+export function DeleteFile(arg1) {
+  return window['go']['app']['App']['DeleteFile'](arg1);
+}
+
 export function DeleteMessage(arg1) {
   return window['go']['app']['App']['DeleteMessage'](arg1);
 }
@@ -56,6 +60,10 @@ export function GetAppVersion() {
 
 export function GetChallenge(arg1) {
   return window['go']['app']['App']['GetChallenge'](arg1);
+}
+
+export function GetChallengeProgress(arg1, arg2) {
+  return window['go']['app']['App']['GetChallengeProgress'](arg1, arg2);
 }
 
 export function GetChallengeStats() {
@@ -84,6 +92,10 @@ export function GetDiscoveredServers() {
 
 export function GetFile(arg1) {
   return window['go']['app']['App']['GetFile'](arg1);
+}
+
+export function GetFileContent(arg1) {
+  return window['go']['app']['App']['GetFileContent'](arg1);
 }
 
 export function GetFileProgress(arg1) {
@@ -122,6 +134,10 @@ export function GetMessages(arg1, arg2) {
   return window['go']['app']['App']['GetMessages'](arg1, arg2);
 }
 
+export function GetMessagesByChannel(arg1, arg2, arg3) {
+  return window['go']['app']['App']['GetMessagesByChannel'](arg1, arg2, arg3);
+}
+
 export function GetMyInfo() {
   return window['go']['app']['App']['GetMyInfo']();
 }
@@ -134,6 +150,10 @@ export function GetNetworkStats() {
   return window['go']['app']['App']['GetNetworkStats']();
 }
 
+export function GetPinnedMessages() {
+  return window['go']['app']['App']['GetPinnedMessages']();
+}
+
 export function GetRecentChannels() {
   return window['go']['app']['App']['GetRecentChannels']();
 }
@@ -144,6 +164,10 @@ export function GetServerStatus() {
 
 export function GetSubChannels() {
   return window['go']['app']['App']['GetSubChannels']();
+}
+
+export function GetTypingUsers() {
+  return window['go']['app']['App']['GetTypingUsers']();
 }
 
 export function GetUserProfile() {
@@ -200,6 +224,10 @@ export function SendCodeMessage(arg1) {
 
 export function SendMessage(arg1) {
   return window['go']['app']['App']['SendMessage'](arg1);
+}
+
+export function SetTypingStatus() {
+  return window['go']['app']['App']['SetTypingStatus']();
 }
 
 export function StartClientMode(arg1) {

@@ -132,6 +132,9 @@ func (cm *ChallengeManager) AssignChallenge(challengeID, memberID, assignedBy st
 	cm.server.eventBus.Publish(events.EventChallengeAssigned, events.NewChallengeEvent(
 		events.EventChallengeAssigned, challenge, memberID, cm.server.config.ChannelID, "assigned", assignment))
 
+	// 广播系统消息
+	cm.broadcastChallengeAssigned(challenge, memberID, assignedBy)
+
 	return nil
 }
 
@@ -153,9 +156,8 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 		return
 	}
 
-	// 保存提交记录（所有提交都接受，无需验证）
+	// 保存提交记录（协作平台：所有提交都接受，无需验证）
 	submission.SubmittedAt = time.Now()
-	submission.IsCorrect = true // 不需要验证，全部标记为正确
 
 	// 更新题目状态（添加到已解决列表）
 	challenge, err := cm.server.challengeRepo.GetByID(submission.ChallengeID)
@@ -176,9 +178,8 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 
 	if !alreadySolved {
 		challenge.SolvedBy = append(challenge.SolvedBy, submission.MemberID)
-		if challenge.SolvedAt == nil {
-			now := time.Now()
-			challenge.SolvedAt = &now
+		if challenge.SolvedAt.IsZero() {
+			challenge.SolvedAt = time.Now()
 		}
 		challenge.Status = "solved"
 
@@ -200,11 +201,11 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 		cm.server.logger.Error("[ChallengeManager] Failed to update progress: %v", err)
 	}
 
-	cm.server.logger.Info("[ChallengeManager] Flag submitted and accepted: %s by %s (flag: %s)",
+	cm.server.logger.Info("[ChallengeManager] Flag submitted: %s by %s (flag: %s)",
 		submission.ChallengeID, submission.MemberID, submission.Flag)
 
 	// 发布事件
-	cm.server.eventBus.Publish(events.EventChallengeSolved, events.NewSubmissionEvent(&submission, true, "Flag accepted!"))
+	cm.server.eventBus.Publish(events.EventChallengeSolved, events.NewSubmissionEvent(&submission, true, "Flag submitted"))
 
 	// 广播解题消息
 	cm.broadcastChallengeSolved(&submission)
@@ -227,12 +228,11 @@ func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error
 		return fmt.Errorf("challenge is closed")
 	}
 
-	// 创建提交记录
+	// 创建提交记录（协作平台：不验证，全部接受）
 	submission := &models.ChallengeSubmission{
 		ChallengeID: challengeID,
 		MemberID:    memberID,
 		Flag:        flag,
-		IsCorrect:   true, // 不验证，全部接受
 		SubmittedAt: time.Now(),
 	}
 
@@ -247,9 +247,8 @@ func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error
 
 	if !alreadySolved {
 		challenge.SolvedBy = append(challenge.SolvedBy, memberID)
-		if challenge.SolvedAt == nil {
-			now := time.Now()
-			challenge.SolvedAt = &now
+		if challenge.SolvedAt.IsZero() {
+			challenge.SolvedAt = time.Now()
 		}
 		challenge.Status = "solved"
 
@@ -380,6 +379,34 @@ func (cm *ChallengeManager) broadcastChallengeSolved(submission *models.Challeng
 
 	if err := cm.server.broadcastManager.Broadcast(systemMsg); err != nil {
 		cm.server.logger.Error("[ChallengeManager] Failed to broadcast challenge solved: %v", err)
+	}
+}
+
+// broadcastChallengeAssigned 广播题目分配系统消息
+func (cm *ChallengeManager) broadcastChallengeAssigned(challenge *models.Challenge, memberID string, assignedBy string) {
+	systemMsg := &models.Message{
+		ID:        generateMessageID(),
+		ChannelID: cm.server.config.ChannelID,
+		SenderID:  "system",
+		Type:      models.MessageTypeSystem,
+		Timestamp: time.Now(),
+	}
+
+	// 设置系统消息内容
+	systemMsg.Content = models.MessageContent{
+		"event":     "challenge_assigned",
+		"actor_id":  assignedBy,
+		"target_id": challenge.ID,
+		"extra": map[string]interface{}{
+			"challenge_id": challenge.ID,
+			"title":        challenge.Title,
+			"assignee_id":  memberID,
+			"message":      fmt.Sprintf("Challenge assigned: %s -> %s", challenge.Title, memberID),
+		},
+	}
+
+	if err := cm.server.broadcastManager.Broadcast(systemMsg); err != nil {
+		cm.server.logger.Error("[ChallengeManager] Failed to broadcast challenge assignment: %v", err)
 	}
 }
 

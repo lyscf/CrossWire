@@ -19,6 +19,8 @@ export function CreateChallenge(arg1:app.CreateChallengeRequest):Promise<app.Res
 
 export function DeleteChallenge(arg1:string):Promise<app.Response>;
 
+export function DeleteFile(arg1:string):Promise<app.Response>;
+
 export function DeleteMessage(arg1:string):Promise<app.Response>;
 
 export function DiscoverServers(arg1:number):Promise<app.Response>;
@@ -30,6 +32,8 @@ export function ExportData(arg1:string,arg2:app.ExportOptions):Promise<app.Respo
 export function GetAppVersion():Promise<string>;
 
 export function GetChallenge(arg1:string):Promise<app.Response>;
+
+export function GetChallengeProgress(arg1:string,arg2:string):Promise<app.Response>;
 
 export function GetChallengeStats():Promise<app.Response>;
 
@@ -44,6 +48,8 @@ export function GetCurrentMode():Promise<string>;
 export function GetDiscoveredServers():Promise<app.Response>;
 
 export function GetFile(arg1:string):Promise<app.Response>;
+
+export function GetFileContent(arg1:string):Promise<app.Response>;
 
 export function GetFileProgress(arg1:string):Promise<app.Response>;
 
@@ -63,17 +69,23 @@ export function GetMessage(arg1:string):Promise<app.Response>;
 
 export function GetMessages(arg1:number,arg2:number):Promise<app.Response>;
 
+export function GetMessagesByChannel(arg1:string,arg2:number,arg3:number):Promise<app.Response>;
+
 export function GetMyInfo():Promise<app.Response>;
 
 export function GetNetworkInterfaces():Promise<app.Response>;
 
 export function GetNetworkStats():Promise<app.Response>;
 
+export function GetPinnedMessages():Promise<app.Response>;
+
 export function GetRecentChannels():Promise<app.Response>;
 
 export function GetServerStatus():Promise<app.Response>;
 
 export function GetSubChannels():Promise<app.Response>;
+
+export function GetTypingUsers():Promise<app.Response>;
 
 export function GetUserProfile():Promise<app.Response>;
 
@@ -85,7 +97,7 @@ export function KickMember(arg1:app.KickMemberRequest):Promise<app.Response>;
 
 export function MuteMember(arg1:string,arg2:number):Promise<app.Response>;
 
-export function PinMessage(arg1:string):Promise<app.Response>;
+export function PinMessage(arg1:app.PinMessageRequest):Promise<app.Response>;
 
 export function ReactToMessage(arg1:string,arg2:string):Promise<app.Response>;
 
@@ -102,6 +114,8 @@ export function SelectFile(arg1:string,arg2:string):Promise<app.Response>;
 export function SendCodeMessage(arg1:app.SendCodeRequest):Promise<app.Response>;
 
 export function SendMessage(arg1:app.SendMessageRequest):Promise<app.Response>;
+
+export function SetTypingStatus():Promise<app.Response>;
 
 export function StartClientMode(arg1:app.ClientConfig):Promise<app.Response>;
 

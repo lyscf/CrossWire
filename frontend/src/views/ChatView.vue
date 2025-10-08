@@ -32,7 +32,7 @@
           theme="light"
           :inline-collapsed="collapsed"
         >
-          <a-menu-item key="main">
+          <a-menu-item key="main" @click="handleChannelSelect('main')">
             <template #icon>
               <WechatOutlined />
             </template>
@@ -52,7 +52,7 @@
 
           <!-- 题目频道列表 -->
           <a-menu-item-group v-if="!collapsed && subChannels.length > 0" title="题目频道">
-            <a-menu-item v-for="channel in subChannels" :key="channel.id">
+            <a-menu-item v-for="channel in subChannels" :key="channel.id" @click="handleChannelSelect(channel.id)">
               <template #icon>
                 <CodeOutlined />
               </template>
@@ -79,7 +79,7 @@
         <a-layout-header class="chat-header">
           <div class="header-container">
             <div class="header-left">
-              <h3 class="current-channel">主频道</h3>
+              <h3 class="current-channel">{{ currentChannelLabel }}</h3>
               <a-tag color="green">
                 <CheckCircleOutlined /> 已连接
               </a-tag>
@@ -151,7 +151,10 @@
               </template>
               <template #message>
                 <div class="pinned-content">
-                  <strong>admin:</strong> {{ pinnedMessages[0].content }}
+                  <div v-for="item in pinnedMessages" :key="item.id" class="pinned-item">
+                    <strong>{{ item.sender_nickname || 'admin' }}:</strong>
+                    {{ item.content_text || item.content?.text || '' }}
+                  </div>
                 </div>
               </template>
             </a-alert>
@@ -198,7 +201,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, h, onMounted } from 'vue'
+import { ref, reactive, h, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
@@ -230,6 +233,8 @@ import Settings from '@/components/Settings.vue'
 const router = useRouter()
 const collapsed = ref(false)
 const selectedChannels = ref(['main'])
+const currentChannelID = ref('main')
+const currentChannelLabel = computed(() => currentChannelID.value === 'main' ? '主频道' : (subChannels.value.find(ch => ch.id === currentChannelID.value)?.name || '子频道'))
 const memberDrawerVisible = ref(false)
 const fileManagerVisible = ref(false)
 const userProfileVisible = ref(false)
@@ -250,7 +255,19 @@ const messages = ref([])
 const members = ref([])
 const subChannels = ref([])
 
-import { sendMessage, getMessages, getSubChannels, getMembers } from '@/api/app'
+import { 
+  sendMessage, 
+  getMessages, 
+  getSubChannels, 
+  getMembers,
+  getMessagesByChannel,
+  deleteMessage,
+  pinMessage,
+  unpinMessage,
+  getPinnedMessages,
+  reactToMessage,
+  searchMessages
+} from '@/api/app'
 
 const handleSendMessage = async (messageData) => {
   // messageData 可能是字符串（旧版）或对象（包含 content 和 mentions）
@@ -271,7 +288,8 @@ const handleSendMessage = async (messageData) => {
   messages.value.push(newMessage)
   
   try {
-    await sendMessage(content, 'text')
+    const channelParam = currentChannelID.value === 'main' ? null : currentChannelID.value
+    await sendMessage(content, 'text', channelParam)
   } catch (e) {
     // 发送失败提示
     message.error('发送失败: ' + (e.message || ''))
@@ -374,7 +392,44 @@ onMounted(async () => {
     console.error('Failed to load sub-channels:', e)
     // 子频道加载失败不影响使用（可能是客户端模式）
   }
+  // 加载置顶消息
+  try {
+    const list = await getPinnedMessages()
+    if (Array.isArray(list)) {
+      pinnedMessages.value = list
+    }
+  } catch (e) {
+    // ignore
+  }
 })
+
+const handleChannelSelect = async (channelId) => {
+  currentChannelID.value = channelId
+  selectedChannels.value = [channelId]
+  // 重新加载该频道的消息
+  try {
+    let list = []
+    try {
+      list = await getMessagesByChannel(channelId, 50, 0)
+    } catch (e) {
+      // 兼容：如果未生成绑定，回退到默认接口
+      list = await getMessages(50, 0)
+    }
+    messages.value = []
+    if (Array.isArray(list)) {
+      list.forEach(m => messages.value.push({
+        id: m.id || m.ID,
+        senderId: m.sender_id || m.SenderID,
+        senderName: m.sender_name || m.SenderName || 'user',
+        content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+        timestamp: new Date(m.timestamp || m.Timestamp || Date.now()),
+        type: (m.type || m.Type || 'text')
+      }))
+    }
+  } catch (e) {
+    message.warning('加载该频道消息失败')
+  }
+}
 </script>
 
 <style scoped>

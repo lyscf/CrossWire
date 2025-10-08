@@ -29,7 +29,6 @@
 - ✅ **跨平台**：支持 Windows/Linux/macOS
 - ✅ **轻量级**：适合桌面应用
 - ✅ **ACID**：完整的事务支持
-- ✅ **FTS5**：内置全文搜索
 - ✅ **JSON**：支持 JSON1 扩展
 
 **性能指标：**
@@ -358,38 +357,6 @@ CREATE INDEX idx_messages_deleted ON messages(deleted) WHERE deleted = 0;
 
 ---
 
-### 2.4 全文搜索表 (messages_fts)
-
-```sql
--- 使用 FTS5 创建全文索引
-CREATE VIRTUAL TABLE messages_fts USING fts5(
-    content_text,                     -- 消息文本
-    sender_nickname,                  -- 发送者昵称
-    tags,                             -- 标签
-    content='messages',               -- 关联到 messages 表
-    content_rowid='rowid'             -- 使用 rowid 关联
-);
-
--- 触发器：插入时同步到 FTS
-CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content_text, sender_nickname, tags)
-    VALUES (new.rowid, new.content_text, new.sender_nickname, new.tags);
-END;
-
--- 触发器：更新时同步到 FTS
-CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
-    UPDATE messages_fts 
-    SET content_text = new.content_text,
-        sender_nickname = new.sender_nickname,
-        tags = new.tags
-    WHERE rowid = old.rowid;
-END;
-
--- 触发器：删除时同步到 FTS
-CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-    DELETE FROM messages_fts WHERE rowid = old.rowid;
-END;
-```
 
 ---
 
@@ -1005,25 +972,6 @@ WHERE expires_at IS NULL OR expires_at > unixepoch('now');
 
 ### 4.3 全文搜索优化
 
-```sql
--- 配置 FTS5 Tokenizer（支持中文）
-CREATE VIRTUAL TABLE messages_fts USING fts5(
-    content_text,
-    sender_nickname,
-    tags,
-    tokenize = 'porter unicode61 remove_diacritics 2',
-    content = 'messages',
-    content_rowid = 'rowid'
-);
-
--- 使用 BM25 排序（相关性排序）
-SELECT m.*, bm25(messages_fts) as rank
-FROM messages m
-JOIN messages_fts ON m.rowid = messages_fts.rowid
-WHERE messages_fts MATCH 'sql AND injection'
-ORDER BY rank
-LIMIT 50;
-```
 
 ---
 
@@ -1339,7 +1287,7 @@ CREATE TABLE challenges (
     points          INTEGER NOT NULL,
     description     TEXT NOT NULL,
     flag_format     TEXT,
-    flag_hash       TEXT,                       -- SHA256，不存明文
+    flag            TEXT,                       -- Flag明文，所有人可见
     url             TEXT,
     attachments     TEXT,                       -- JSON: ["file-id-1", "file-id-2"]
     tags            TEXT,                       -- JSON: ["sqli", "waf-bypass"]
@@ -1495,7 +1443,7 @@ type Challenge struct {
     Points      int       `json:"points" db:"points"`
     Description string    `json:"description" db:"description"`
     FlagFormat  string    `json:"flag_format" db:"flag_format"`
-    FlagHash    string    `json:"-" db:"flag_hash"`
+    Flag        string    `json:"flag" db:"flag"`
     URL         string    `json:"url" db:"url"`
     Attachments []string  `json:"attachments" db:"attachments"`
     Tags        []string  `json:"tags" db:"tags"`
@@ -1630,7 +1578,6 @@ func (db *Database) GetMemberProgress(challengeID, memberID string) (*ChallengeP
 CrossWire 数据库设计特点：
 
 ✅ **高性能**：合理的索引和查询优化  
-✅ **全文搜索**：FTS5 支持中英文搜索  
 ✅ **安全存储**：加密敏感数据  
 ✅ **灵活扩展**：JSON 字段支持扩展  
 ✅ **事务完整性**：ACID 保证数据一致性  

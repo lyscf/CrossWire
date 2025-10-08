@@ -21,20 +21,18 @@ type Message struct {
 	Tags           StringArray    `gorm:"type:text" json:"tags,omitempty"`
 
 	// APP层使用的字段（兼容）
-	IsEdited  bool `gorm:"type:integer;default:0;index:idx_messages_edited" json:"is_edited"`
 	IsDeleted bool `gorm:"type:integer;default:0;index:idx_messages_is_deleted" json:"is_deleted"`
 	IsPinned  bool `gorm:"type:integer;default:0;index:idx_messages_is_pinned" json:"is_pinned"`
 
 	// 原有字段
-	Pinned     bool       `gorm:"type:integer;default:0;index:idx_messages_pinned" json:"pinned"`
-	Deleted    bool       `gorm:"type:integer;default:0;index:idx_messages_deleted" json:"deleted"`
-	DeletedBy  string     `gorm:"type:text" json:"deleted_by,omitempty"`
-	DeletedAt  *time.Time `gorm:"type:integer" json:"deleted_at,omitempty"`
-	Timestamp  time.Time  `gorm:"type:integer;not null;index:idx_messages_channel_time" json:"timestamp"`
-	EditedAt   *time.Time `gorm:"type:integer" json:"edited_at,omitempty"`
-	Encrypted  bool       `gorm:"type:integer;default:1" json:"encrypted"`
-	KeyVersion int        `gorm:"type:integer;default:1" json:"key_version"`
-	Metadata   JSONField  `gorm:"type:text" json:"metadata,omitempty"`
+	Pinned     bool      `gorm:"type:integer;default:0;index:idx_messages_pinned" json:"pinned"`
+	Deleted    bool      `gorm:"type:integer;default:0;index:idx_messages_deleted" json:"deleted"`
+	DeletedBy  string    `gorm:"type:text" json:"deleted_by,omitempty"`
+	DeletedAt  time.Time `gorm:"not null" json:"deleted_at"`
+	Timestamp  time.Time `gorm:"not null;index:idx_messages_channel_time" json:"timestamp"`
+	Encrypted  bool      `gorm:"type:integer;default:1" json:"encrypted"`
+	KeyVersion int       `gorm:"type:integer;default:1" json:"key_version"`
+	Metadata   JSONField `gorm:"type:text" json:"metadata,omitempty"`
 
 	// 题目聊天室支持
 	ChallengeID string `gorm:"type:text;index:idx_messages_challenge" json:"challenge_id,omitempty"`
@@ -57,11 +55,13 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 	if m.Timestamp.IsZero() {
 		m.Timestamp = time.Now()
 	}
+	if m.DeletedAt.IsZero() {
+		m.DeletedAt = time.Now()
+	}
 	if m.RoomType == "" {
 		m.RoomType = "main"
 	}
 	// 同步兼容字段
-	m.IsEdited = m.EditedAt != nil
 	m.IsDeleted = m.Deleted
 	m.IsPinned = m.Pinned
 	return nil
@@ -69,7 +69,6 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 
 // AfterFind GORM 钩子 - 同步兼容字段
 func (m *Message) AfterFind(tx *gorm.DB) error {
-	m.IsEdited = m.EditedAt != nil
 	m.IsDeleted = m.Deleted
 	m.IsPinned = m.Pinned
 	return nil
@@ -78,7 +77,6 @@ func (m *Message) AfterFind(tx *gorm.DB) error {
 // BeforeUpdate GORM 钩子
 func (m *Message) BeforeUpdate(tx *gorm.DB) error {
 	// 同步兼容字段
-	m.IsEdited = m.EditedAt != nil
 	m.IsDeleted = m.Deleted
 	m.IsPinned = m.Pinned
 	return nil
@@ -90,7 +88,7 @@ type MessageReaction struct {
 	MessageID string    `gorm:"type:text;not null;index:idx_reactions_message" json:"message_id"`
 	UserID    string    `gorm:"type:text;not null" json:"user_id"`
 	Emoji     string    `gorm:"type:text;not null" json:"emoji"`
-	CreatedAt time.Time `gorm:"type:integer;not null" json:"created_at"`
+	CreatedAt time.Time `gorm:"not null" json:"created_at"`
 
 	// 关联
 	Message *Message `gorm:"foreignKey:MessageID;constraint:OnDelete:CASCADE" json:"-"`
@@ -114,7 +112,7 @@ type TypingStatus struct {
 	ID        int       `gorm:"primaryKey;autoIncrement" json:"id"`
 	ChannelID string    `gorm:"type:text;not null;index:idx_typing_channel" json:"channel_id"`
 	UserID    string    `gorm:"type:text;not null" json:"user_id"`
-	Timestamp time.Time `gorm:"type:integer;not null" json:"timestamp"`
+	Timestamp time.Time `gorm:"not null" json:"timestamp"`
 
 	// 关联
 	Channel *Channel `gorm:"foreignKey:ChannelID;constraint:OnDelete:CASCADE" json:"-"`

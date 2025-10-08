@@ -8,7 +8,7 @@ import (
 
 // ==================== 成员管理 API ====================
 
-// GetMembers 获取成员列表
+// GetMembers 获取成员列表（带批量统计优化）
 func (a *App) GetMembers() Response {
 	a.mu.RLock()
 	mode := a.mode
@@ -34,10 +34,17 @@ func (a *App) GetMembers() Response {
 		return NewErrorResponse("query_error", "获取成员失败", err.Error())
 	}
 
-	// 转换为DTO
+	// 🔧 批量获取所有成员的贡献统计（性能优化：一次查询）
+	contributionStatsMap, err := a.db.ChallengeRepo().GetAllMembersContributionStats()
+	if err != nil {
+		a.logger.Warn("[GetMembers] Failed to get contribution stats: %v", err)
+		contributionStatsMap = make(map[string]int)
+	}
+
+	// 转换为DTO（使用预先计算的统计数据）
 	memberDTOs := make([]*MemberDTO, 0, len(members))
 	for _, member := range members {
-		dto := a.memberToDTO(member)
+		dto := a.memberToDTOWithStats(member, contributionStatsMap[member.ID])
 		memberDTOs = append(memberDTOs, dto)
 	}
 
@@ -50,14 +57,21 @@ func (a *App) GetMember(memberID string) Response {
 	defer a.mu.RUnlock()
 
 	if !a.isRunning {
+		a.logger.Warn("[GetMember] Not running")
 		return NewErrorResponse("not_running", "未连接到频道", "")
 	}
+
+	a.logger.Debug("[GetMember] Fetching member info for ID: %s", memberID)
 
 	// 从数据库获取成员
 	member, err := a.db.MemberRepo().GetByID(memberID)
 	if err != nil {
+		a.logger.Error("[GetMember] Failed to get member %s: %v", memberID, err)
 		return NewErrorResponse("not_found", "成员不存在", err.Error())
 	}
+
+	a.logger.Info("[GetMember] Successfully retrieved member: %s (nickname: %s)",
+		member.ID, member.Nickname)
 
 	dto := a.memberToDTO(member)
 	return NewSuccessResponse(dto)
@@ -67,29 +81,38 @@ func (a *App) GetMember(memberID string) Response {
 func (a *App) GetMyInfo() Response {
 	a.mu.RLock()
 	mode := a.mode
-	_ = a.server
+	srv := a.server
 	cli := a.client
 	a.mu.RUnlock()
 
 	if !a.isRunning {
+		a.logger.Warn("[GetMyInfo] Not running")
 		return NewErrorResponse("not_running", "未连接到频道", "")
 	}
 
 	var memberID string
-	if mode == ModeServer && a.server != nil {
-		// 服务端无本地成员ID，简化：返回错误
-		return NewErrorResponse("invalid_mode", "服务端无本地成员", "")
+	if mode == ModeServer && srv != nil {
+		// 服务端使用固定的"server"成员ID
+		memberID = "server"
+		a.logger.Debug("[GetMyInfo] Server mode, using member ID: %s", memberID)
 	} else if mode == ModeClient && cli != nil {
 		memberID = cli.GetMemberID()
+		a.logger.Debug("[GetMyInfo] Client mode, member ID: %s", memberID)
 	} else {
+		a.logger.Error("[GetMyInfo] Invalid mode: %s", mode)
 		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
 	}
 
 	// 从数据库获取成员信息
+	a.logger.Debug("[GetMyInfo] Fetching member info for ID: %s", memberID)
 	member, err := a.db.MemberRepo().GetByID(memberID)
 	if err != nil {
+		a.logger.Error("[GetMyInfo] Failed to get member info: %v", err)
 		return NewErrorResponse("not_found", "获取用户信息失败", err.Error())
 	}
+
+	a.logger.Info("[GetMyInfo] Successfully retrieved member info: %s (nickname: %s, role: %s)",
+		member.ID, member.Nickname, member.Role)
 
 	dto := a.memberToDTO(member)
 	return NewSuccessResponse(dto)
@@ -310,18 +333,68 @@ func (a *App) UpdateMemberRole(memberID string, role models.MemberRole) Response
 
 // ==================== 辅助方法 ====================
 
-// memberToDTO 转换成员模型为DTO
+// memberToDTO 转换成员模型为DTO（单个查询，用于GetMember等单个成员查询）
 func (a *App) memberToDTO(member *models.Member) *MemberDTO {
-	return &MemberDTO{
-		ID:         member.ID,
-		Nickname:   member.Nickname,
-		Avatar:     member.Avatar,
-		Role:       member.Role,
-		Status:     member.Status,
-		IsOnline:   member.IsOnline,
-		JoinTime:   member.JoinTime.Unix(),
-		LastSeenAt: member.LastSeenAt.Unix(),
-		IsMuted:    member.IsMuted,
-		IsBanned:   member.IsBanned,
+	// 获取该成员的参与题目数
+	assignedCount, err := a.db.ChallengeRepo().CountAssignedToMember(member.ID)
+	if err != nil {
+		a.logger.Warn("[memberToDTO] Failed to count assigned challenges for %s: %v", member.ID, err)
+		assignedCount = 0
 	}
+
+	return a.memberToDTOWithStats(member, assignedCount)
+}
+
+// memberToDTOWithStats 转换成员模型为DTO（使用预先计算的统计数据）
+func (a *App) memberToDTOWithStats(member *models.Member, assignedCount int) *MemberDTO {
+	dto := &MemberDTO{
+		ID:           member.ID,
+		Nickname:     member.Nickname,
+		Avatar:       member.Avatar,
+		Role:         member.Role,
+		Status:       member.Status,
+		IsOnline:     member.IsOnline,
+		JoinTime:     member.JoinTime.Unix(),
+		LastSeenAt:   member.LastSeenAt.Unix(),
+		IsMuted:      member.IsMuted,
+		IsBanned:     member.IsBanned,
+		MessageCount: member.MessageCount,
+		FilesShared:  member.FilesShared,
+		OnlineTime:   member.OnlineTime,
+	}
+
+	// 提取Skills - 同时提供简单版本（类别名）与详细版本（含等级/经验）
+	if len(member.Skills) > 0 {
+		skills := make([]string, len(member.Skills))
+		details := make([]SkillDetail, len(member.Skills))
+		for i, skill := range member.Skills {
+			skills[i] = skill.Category
+			details[i] = SkillDetail{
+				Category:   skill.Category,
+				Level:      skill.Level,
+				Experience: skill.Experience,
+			}
+		}
+		dto.Skills = skills
+		dto.SkillDetails = details
+	}
+
+	// 从Metadata提取email和bio
+	if member.Metadata != nil {
+		if email, ok := member.Metadata["email"].(string); ok {
+			dto.Email = email
+		}
+		if bio, ok := member.Metadata["bio"].(string); ok {
+			dto.Bio = bio
+		}
+	}
+
+	// 🔧 统计参与的题目数（协作平台：分配给该成员的题目）
+	dto.SolvedChallenges = assignedCount
+
+	// 🔧 计算贡献度分数（协作平台）
+	// 方案：消息数 * 1 + 文件数 * 5 + 参与题目数 * 10
+	dto.TotalPoints = member.MessageCount + (member.FilesShared * 5) + (assignedCount * 10)
+
+	return dto
 }

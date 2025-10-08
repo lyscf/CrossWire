@@ -99,7 +99,7 @@
 </template>
 
 <script setup>
-import { ref, computed, h } from 'vue'
+import { ref, computed, h, onMounted, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   FlagOutlined,
@@ -107,6 +107,7 @@ import {
   UploadOutlined
 } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
+import { getChallengeSubmissions } from '@/api/app'
 
 const props = defineProps({
   open: {
@@ -133,6 +134,44 @@ const fileList = ref([])
 
 // 提交历史（从后端加载）
 const submissions = ref([])
+const loading = ref(false)
+
+// 加载提交历史
+const loadSubmissions = async () => {
+  if (!props.challenge?.id) return
+  loading.value = true
+  try {
+    const data = await getChallengeSubmissions(props.challenge.id)
+    console.log('Loaded submissions:', data)
+    if (Array.isArray(data)) {
+      submissions.value = data.map(s => ({
+        id: s.id || s.ID,
+        flag: s.flag || '',
+        correct: s.correct || false,
+        submitTime: s.submit_time ? new Date(s.submit_time * 1000) : new Date(),
+        feedback: s.feedback || ''
+      }))
+    }
+  } catch (error) {
+    console.error('Failed to load submissions:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 监听弹窗打开时加载数据
+watch(() => props.open, (newVal) => {
+  if (newVal && props.challenge?.id) {
+    loadSubmissions()
+  }
+})
+
+// 组件挂载时加载数据
+onMounted(() => {
+  if (props.open && props.challenge?.id) {
+    loadSubmissions()
+  }
+})
 
 const beforeUpload = (file) => {
   const isLt10M = file.size / 1024 / 1024 < 10

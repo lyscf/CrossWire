@@ -15,7 +15,7 @@ type AuditLog struct {
 	TargetID   string    `gorm:"type:text" json:"target_id,omitempty"`
 	Reason     string    `gorm:"type:text" json:"reason,omitempty"`
 	Details    JSONField `gorm:"type:text" json:"details,omitempty"`
-	Timestamp  time.Time `gorm:"type:integer;not null;index:idx_audit_timestamp" json:"timestamp"`
+	Timestamp  time.Time `gorm:"not null;index:idx_audit_timestamp" json:"timestamp"`
 	IPAddress  string    `gorm:"type:text" json:"ip_address,omitempty"`
 	UserAgent  string    `gorm:"type:text" json:"user_agent,omitempty"`
 
@@ -50,8 +50,8 @@ type UserProfile struct {
 	Theme      string         `gorm:"type:text;default:'dark'" json:"theme"`
 	Language   string         `gorm:"type:text;default:'zh-CN'" json:"language"`
 	AutoStart  bool           `gorm:"type:integer;default:0" json:"auto_start"`
-	CreatedAt  time.Time      `gorm:"type:integer;not null" json:"created_at"`
-	UpdatedAt  time.Time      `gorm:"type:integer;not null" json:"updated_at"`
+	CreatedAt  time.Time      `gorm:"not null" json:"created_at"`
+	UpdatedAt  time.Time      `gorm:"not null" json:"updated_at"`
 }
 
 // TableName 指定表名
@@ -83,7 +83,7 @@ type RecentChannel struct {
 	ChannelName   string        `gorm:"type:text;not null" json:"channel_name"`
 	ServerAddress string        `gorm:"type:text" json:"server_address,omitempty"`
 	TransportMode TransportMode `gorm:"type:text" json:"transport_mode,omitempty"`
-	LastJoined    time.Time     `gorm:"type:integer;not null;index:idx_recent_last_joined" json:"last_joined"`
+	LastJoined    time.Time     `gorm:"not null;index:idx_recent_last_joined" json:"last_joined"`
 	Pinned        bool          `gorm:"type:integer;default:0" json:"pinned"`
 }
 
@@ -96,8 +96,8 @@ func (RecentChannel) TableName() string {
 type CacheEntry struct {
 	Key       string    `gorm:"primaryKey;type:text" json:"key"`
 	Value     []byte    `gorm:"type:blob;not null" json:"-"`
-	ExpiresAt time.Time `gorm:"type:integer;not null;index:idx_cache_expires" json:"expires_at"`
-	CreatedAt time.Time `gorm:"type:integer;not null" json:"created_at"`
+	ExpiresAt time.Time `gorm:"not null;index:idx_cache_expires" json:"expires_at"`
+	CreatedAt time.Time `gorm:"not null" json:"created_at"`
 }
 
 // TableName 指定表名

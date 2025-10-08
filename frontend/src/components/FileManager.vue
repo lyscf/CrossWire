@@ -108,7 +108,7 @@
                   <ShareAltOutlined /> 分享
                 </a-menu-item>
                 <a-menu-divider />
-                <a-menu-item danger @click="deleteFile(file)">
+                <a-menu-item v-if="canDelete(file)" danger @click="deleteFile(file)">
                   <DeleteOutlined /> 删除
                 </a-menu-item>
               </a-menu>
@@ -157,7 +157,7 @@
               <a-button type="link" size="small" @click="previewFile(record)">
                 预览
               </a-button>
-              <a-button type="link" size="small" danger @click="deleteFile(record)">
+              <a-button v-if="canDelete(record)" type="link" size="small" danger @click="deleteFile(record)">
                 删除
               </a-button>
             </a-space>
@@ -220,7 +220,7 @@
           <a-button block @click="shareFile(selectedFile)">
             <ShareAltOutlined /> 生成分享链接
           </a-button>
-          <a-button danger block @click="deleteFile(selectedFile)">
+          <a-button v-if="canDelete(selectedFile)" danger block @click="deleteFile(selectedFile)">
             <DeleteOutlined /> 删除文件
           </a-button>
         </a-space>
@@ -247,7 +247,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { EventsOn } from '../../wailsjs/runtime/runtime'
 import { message, Modal, Empty } from 'ant-design-vue'
 import SearchInput from '@/components/Common/SearchInput.vue'
 import {
@@ -269,6 +270,8 @@ import {
   CodeOutlined as FileCodeOutlined
 } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
+import { getFiles, uploadFile, downloadFile as downloadFileAPI, deleteFile as deleteFileAPI, selectFile as selectFileDialog, getFileContent } from '@/api/app'
+import { useAppStore } from '@/stores/app'
 
 const props = defineProps({
   open: {
@@ -294,6 +297,62 @@ const selectedFiles = ref([])
 
 // 文件数据（从后端加载）
 const files = ref([])
+const loading = ref(false)
+const appStore = useAppStore()
+
+// 加载文件列表
+const loadFiles = async () => {
+  loading.value = true
+  try {
+    const fileList = await getFiles(100, 0)
+    console.log('Loaded files:', fileList)
+    if (Array.isArray(fileList)) {
+      files.value = fileList.map(f => ({
+        id: f.id || f.ID,
+        name: f.name || f.Name || 'unnamed',
+        type: getFileTypeFromMime(f.mime_type || f.MimeType || ''),
+        size: f.size || f.Size || 0,
+        url: f.url || '',
+        uploader: f.uploader_name || f.UploaderName || 'Unknown',
+        uploaderId: f.uploader_id || f.UploaderID || f.sender_id || f.SenderID || '',
+        uploadedAt: f.upload_time ? new Date(f.upload_time * 1000) : new Date(),
+        downloads: 0
+      }))
+    }
+  } catch (error) {
+    console.error('Failed to load files:', error)
+    message.warning('加载文件列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 根据MIME类型获取文件类型
+const getFileTypeFromMime = (mimeType) => {
+  if (mimeType.startsWith('image/')) return 'image'
+  if (mimeType.startsWith('video/')) return 'video'
+  if (mimeType.startsWith('audio/')) return 'audio'
+  if (mimeType.includes('pdf')) return 'document'
+  if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('tar')) return 'archive'
+  if (mimeType.includes('javascript') || mimeType.includes('python') || mimeType.includes('java')) return 'code'
+  return 'document'
+}
+
+// 组件挂载时加载文件
+onMounted(() => {
+  loadFiles()
+
+  // 监听文件删除事件
+  EventsOn('file:deleted', (data) => {
+    if (!data) return
+    const fileId = data.file_id || data.id
+    const idx = files.value.findIndex(f => f.id === fileId)
+    if (idx !== -1) {
+      const removed = files.value.splice(idx, 1)
+      message.info(`文件已删除: ${data.filename || removed[0]?.name || fileId}`)
+    }
+  })
+})
 
 const columns = [
   { title: '文件名', dataIndex: 'name', key: 'name', width: 300 },
@@ -407,20 +466,72 @@ const selectFile = (file) => {
   showDetails.value = true
 }
 
-const handleUpload = (file) => {
-  message.success(`文件 ${file.name} 上传成功`)
-  // TODO: 实现文件上传
-  return false
+const handleUpload = async () => {
+  loading.value = true
+  try {
+    // 走系统选择文件，拿到路径后调用后端 UploadFile
+    const sel = await selectFileDialog('选择要上传的文件', '所有文件 (*.*)')
+    const filePath = sel?.path
+    if (!filePath) {
+      loading.value = false
+      return false
+    }
+    message.loading({ content: '正在上传文件...', key: 'fm-upload', duration: 0 })
+    const res = await uploadFile({ file_path: filePath })
+    const filename = res?.filename || filePath.split(/[\\/]/).pop()
+    message.success({ content: `已开始上传: ${filename}`, key: 'fm-upload' })
+    await loadFiles()
+  } catch (error) {
+    console.error('Upload failed:', error)
+    message.error({ content: `上传失败: ${error.message || '未知错误'}`, key: 'fm-upload' })
+  } finally {
+    loading.value = false
+  }
+  return false // 阻止默认上传行为
 }
 
-const downloadFile = (file) => {
-  message.info(`正在下载 ${file.name}`)
-  // TODO: 实现文件下载
+const downloadFile = async (file) => {
+  try {
+    message.info(`正在下载 ${file.name}`)
+    await downloadFileAPI(file.id)
+    message.success(`下载完成: ${file.name}`)
+  } catch (error) {
+    console.error('Download failed:', error)
+    message.error(`下载失败: ${error.message || '未知错误'}`)
+  }
 }
 
-const previewFile = (file) => {
-  message.info(`正在打开预览: ${file.name}`)
-  // TODO: 实现文件预览
+const previewFile = async (file) => {
+  try {
+    const res = await getFileContent(file.id)
+    if (res.mode === 'text') {
+      Modal.info({
+        title: `预览: ${file.name}`,
+        width: 800,
+        content: (
+          <pre style="max-height: 60vh; overflow:auto; white-space: pre-wrap;">{res.text}</pre>
+        )
+      })
+    } else if (res.mode === 'dataurl') {
+      // 图片或PDF的简单预览（图片直接展示，PDF交由浏览器处理）
+      if ((res.mime || '').startsWith('image/')) {
+        Modal.info({
+          title: `预览: ${file.name}`,
+          width: 900,
+          content: (
+            <img src={res.dataUrl} alt={file.name} style="max-width:100%;max-height:70vh;object-fit:contain;" />
+          )
+        })
+      } else {
+        window.open(res.dataUrl, '_blank')
+      }
+    } else {
+      message.warning('该文件类型暂不支持预览')
+    }
+  } catch (e) {
+    console.error('Preview failed:', e)
+    message.error('预览失败')
+  }
 }
 
 const shareFile = (file) => {
@@ -435,23 +546,59 @@ const deleteFile = (file) => {
     okText: '删除',
     cancelText: '取消',
     okType: 'danger',
-    onOk() {
-      const index = files.value.findIndex(f => f.id === file.id)
-      if (index > -1) {
-        files.value.splice(index, 1)
+    async onOk() {
+      try {
+        await deleteFileAPI(file.id)
+        const index = files.value.findIndex(f => f.id === file.id)
+        if (index > -1) {
+          files.value.splice(index, 1)
+        }
         message.success('文件已删除')
         if (selectedFile.value?.id === file.id) {
           selectedFile.value = null
           showDetails.value = false
         }
+      } catch (error) {
+        console.error('Delete failed:', error)
+        message.error(`删除失败: ${error.message || '未知错误'}`)
       }
     }
   })
 }
 
-const batchDownload = () => {
-  message.info(`正在下载 ${selectedFiles.value.length} 个文件`)
-  // TODO: 实现批量下载
+// 上传者或管理员可删除（后端也会再次校验）
+const canDelete = (file) => {
+  const myId = appStore.currentUser?.id || ''
+  const myRole = (appStore.currentUser?.role || '').toLowerCase()
+  const isAdmin = myRole === 'admin' || myRole === 'owner' || myRole === 'moderator'
+  const uploaderId = file?.uploaderId || ''
+  return isAdmin || (!!myId && myId === uploaderId)
+}
+
+const batchDownload = async () => {
+  if (selectedFiles.value.length === 0) {
+    message.warning('请先选择要下载的文件')
+    return
+  }
+
+  message.loading({ content: `正在下载 ${selectedFiles.value.length} 个文件...`, key: 'batch-download', duration: 0 })
+  const concurrency = 3
+  let success = 0
+  let fail = 0
+  for (let i = 0; i < selectedFiles.value.length; i += concurrency) {
+    const batch = selectedFiles.value.slice(i, i + concurrency)
+    await Promise.all(batch.map(async (f) => {
+      try {
+        await downloadFileAPI(f.id)
+        success++
+      } catch (e) {
+        console.error('Download failed:', e)
+        fail++
+      }
+    }))
+  }
+  message.success({ content: `下载完成: 成功 ${success} 个，失败 ${fail} 个`, key: 'batch-download' })
+  selectedFiles.value = []
 }
 
 const batchDelete = () => {

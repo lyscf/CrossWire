@@ -318,7 +318,7 @@ internal/app/
   category: string           // 分类: "web", "pwn", "reverse", "crypto", "misc"
   difficulty: string         // 难度: "easy", "medium", "hard"
   points: number             // 分数
-  flags: string[]            // flag列表
+  flag: string               // 明文Flag（可选）
 }
 ```
 

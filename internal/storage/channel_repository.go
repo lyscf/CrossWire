@@ -120,6 +120,55 @@ func (r *ChannelRepository) GetPinnedMessages(channelID string) ([]*models.Pinne
 	return pinned, nil
 }
 
+// GetPinnedMessagesWithContent 获取带消息内容的置顶列表
+func (r *ChannelRepository) GetPinnedMessagesWithContent(channelID string) ([]*struct {
+	models.PinnedMessage
+	ContentText    string `json:"content_text"`
+	SenderID       string `json:"sender_id"`
+	SenderNickname string `json:"sender_nickname"`
+}, error) {
+	type pinnedWith struct {
+		models.PinnedMessage
+		ContentText    string `json:"content_text"`
+		SenderID       string `json:"sender_id"`
+		SenderNickname string `json:"sender_nickname"`
+	}
+
+	var result []*pinnedWith
+	err := r.db.GetChannelDB().
+		Table("pinned_messages").
+		Select("pinned_messages.*, messages.content_text AS content_text, messages.sender_id AS sender_id, messages.sender_nickname AS sender_nickname").
+		Joins("INNER JOIN messages ON pinned_messages.message_id = messages.id").
+		Where("pinned_messages.channel_id = ?", channelID).
+		Order("pinned_messages.display_order ASC").
+		Scan(&result).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to anonymous struct slice to avoid leaking local type
+	out := make([]*struct {
+		models.PinnedMessage
+		ContentText    string `json:"content_text"`
+		SenderID       string `json:"sender_id"`
+		SenderNickname string `json:"sender_nickname"`
+	}, 0, len(result))
+	for _, item := range result {
+		out = append(out, &struct {
+			models.PinnedMessage
+			ContentText    string `json:"content_text"`
+			SenderID       string `json:"sender_id"`
+			SenderNickname string `json:"sender_nickname"`
+		}{
+			PinnedMessage:  item.PinnedMessage,
+			ContentText:    item.ContentText,
+			SenderID:       item.SenderID,
+			SenderNickname: item.SenderNickname,
+		})
+	}
+	return out, nil
+}
+
 // GetSubChannels 获取子频道列表（题目频道）
 func (r *ChannelRepository) GetSubChannels(parentChannelID string) ([]*models.Channel, error) {
 	var channels []*models.Channel

@@ -492,7 +492,6 @@ c.TriggerOfflineSend()
 - [ ] 实现下载任务数据库持久化
 - [ ] 完善Challenge数据库操作
 - [ ] 在ReceiveManager中处理文件分块
-- [ ] 实现消息搜索功能（FTS5）
 - [ ] 添加更多统计和监控
 - [ ] 实现带宽限流
 - [ ] 添加更详细的日志
