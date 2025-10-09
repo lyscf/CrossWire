@@ -251,3 +251,19 @@ type SystemContent struct {
 // MessageContent 消息内容（存储为 JSON）
 // 使用时需要根据 MessageType 解析为对应的具体类型
 type MessageContent JSONField
+
+// Scan implements sql.Scanner for MessageContent by delegating to JSONField
+func (m *MessageContent) Scan(value interface{}) error {
+	var jf JSONField
+	if err := (&jf).Scan(value); err != nil {
+		return err
+	}
+	*m = MessageContent(jf)
+	return nil
+}
+
+// Value implements driver.Valuer for MessageContent by delegating to JSONField
+func (m MessageContent) Value() (driver.Value, error) {
+	jf := JSONField(m)
+	return jf.Value()
+}

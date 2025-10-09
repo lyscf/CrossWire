@@ -67,8 +67,8 @@ func (r *MemberRepository) UpdateStatus(memberID string, status models.UserStatu
 	return r.db.GetChannelDB().Model(&models.Member{}).
 		Where("id = ?", memberID).
 		Updates(map[string]interface{}{
-			"status":    status,
-			"last_seen": time.Now(),
+			"status":       status,
+			"last_seen_at": time.Now(),
 		}).Error
 }
 

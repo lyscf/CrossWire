@@ -3,8 +3,6 @@
 import {app} from '../models';
 import {models} from '../models';
 
-export function AddHint(arg1:app.AddHintRequest):Promise<app.Response>;
-
 export function AssignChallenge(arg1:string,arg2:Array<string>):Promise<app.Response>;
 
 export function BanMember(arg1:app.BanMemberRequest):Promise<app.Response>;
@@ -130,8 +128,6 @@ export function SubmitFlag(arg1:app.SubmitFlagRequest):Promise<app.Response>;
 export function TestConnection(arg1:string,arg2:models.TransportMode,arg3:number):Promise<app.Response>;
 
 export function UnbanMember(arg1:string):Promise<app.Response>;
-
-export function UnlockHint(arg1:string,arg2:number):Promise<app.Response>;
 
 export function UnmuteMember(arg1:string):Promise<app.Response>;
 

@@ -18,6 +18,13 @@ func NewMessageRepository(db *Database) *MessageRepository {
 
 // Create 创建消息
 func (r *MessageRepository) Create(message *models.Message) error {
+	if message == nil {
+		return nil
+	}
+	// 当没有关联题目时，避免写入空字符串导致外键约束失败
+	if message.ChallengeID == "" {
+		return r.db.GetChannelDB().Omit("challenge_id").Create(message).Error
+	}
 	return r.db.GetChannelDB().Create(message).Error
 }
 
@@ -35,7 +42,7 @@ func (r *MessageRepository) GetByID(messageID string) (*models.Message, error) {
 func (r *MessageRepository) GetByChannelID(channelID string, limit, offset int) ([]*models.Message, error) {
 	var messages []*models.Message
 	err := r.db.GetChannelDB().Where("channel_id = ? AND deleted = ?", channelID, false).
-		Order("timestamp DESC").
+		Order("edited_at ASC").
 		Limit(limit).
 		Offset(offset).
 		Find(&messages).Error
@@ -54,7 +61,7 @@ func (r *MessageRepository) GetRecentMessages(channelID string, limit int, befor
 	}
 
 	var messages []*models.Message
-	err := query.Order("timestamp DESC").
+	err := query.Order("edited_at ASC").
 		Limit(limit).
 		Find(&messages).Error
 	if err != nil {

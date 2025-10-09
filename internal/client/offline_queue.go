@@ -53,7 +53,6 @@ type OfflineQueueStats struct {
 	TotalFailed  int64
 	CurrentSize  int
 	LastSendTime time.Time
-	mutex        sync.RWMutex
 }
 
 // NewOfflineQueue 创建离线消息队列
@@ -242,7 +241,13 @@ func (oq *OfflineQueue) sendMessage(msg *QueuedMessage) error {
 		SenderID:  oq.client.memberID,
 		Type:      msg.Type,
 		Content:   content,
-		ReplyTo:   nil, // TODO: 支持回复
+		ReplyToID: func() *string {
+			if msg.ReplyTo == "" {
+				return nil
+			}
+			v := msg.ReplyTo
+			return &v
+		}(),
 		Timestamp: time.Now(),
 	}
 

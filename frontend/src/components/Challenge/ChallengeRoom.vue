@@ -216,7 +216,7 @@ import {
 } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
 import ChallengeSubmit from './ChallengeSubmit.vue'
-import { getMessages, getMembers, sendMessage as sendMessageAPI } from '@/api/app'
+import { getMessagesByChannel, getMembers, sendMessage as sendMessageAPI, submitFlag as submitFlagAPI } from '@/api/app'
 
 const props = defineProps({
   challenge: {
@@ -225,7 +225,7 @@ const props = defineProps({
   }
 })
 
-defineEmits(['back'])
+const emit = defineEmits(['back', 'refresh'])
 
 const messageInput = ref('')
 const showCodeEditor = ref(false)
@@ -248,15 +248,25 @@ const loadRoomMessages = async () => {
   }
   loading.value = true
   try {
-    const messages = await getMessages(props.challenge.sub_channel_id, 100, 0)
-    console.log('Loaded room messages:', messages)
+    const messages = await getMessagesByChannel(props.challenge.sub_channel_id, 200, 0)
     if (Array.isArray(messages)) {
-      roomMessages.value = messages.map(m => ({
+      const normalized = messages.map(m => ({
         id: m.id || m.ID,
-        sender: m.sender_name || m.SenderName || 'Unknown',
-        content: m.content || m.Content || '',
-        timestamp: m.timestamp ? new Date(m.timestamp * 1000) : new Date(),
-        type: m.message_type || m.MessageType || 'text'
+        senderId: m.sender_id || m.SenderID,
+        senderName: m.sender_name || m.SenderName || 'Unknown',
+        content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+        editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
+        createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
+        type: (m.type || m.MessageType || 'text')
+      }))
+      normalized.sort((a, b) => (a.editedAt || a.createdAt) - (b.editedAt || b.createdAt))
+      roomMessages.value = normalized.map(n => ({
+        id: n.id,
+        senderId: n.senderId,
+        senderName: n.senderName,
+        content: n.content,
+        type: n.type,
+        timestamp: new Date(((n.editedAt || n.createdAt) * 1000) || Date.now())
       }))
     }
   } catch (error) {
@@ -371,8 +381,26 @@ const copyCode = async (code) => {
   }
 }
 
-const handleSubmitFlag = (data) => {
-  message.success('Flag 提交成功')
+const handleSubmitFlag = async (data) => {
+  try {
+    const challengeId = props.challenge?.id || props.challenge?.ID
+    const flag = typeof data === 'string' ? data : data?.flag
+    if (!challengeId) {
+      message.warning('缺少题目ID，无法提交')
+      return
+    }
+    if (!flag) {
+      message.warning('请输入 Flag')
+      return
+    }
+    const res = await submitFlagAPI(challengeId, flag)
+    message.success(res?.message || 'Flag 提交成功')
+    // 通知父组件刷新题目列表/详情
+    emit('refresh', { challengeId })
+  } catch (error) {
+    console.error('Submit flag failed:', error)
+    message.error(error?.message || '提交失败')
+  }
 }
 </script>
 

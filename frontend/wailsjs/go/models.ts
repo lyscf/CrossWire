@@ -1,21 +1,5 @@
 export namespace app {
 	
-	export class AddHintRequest {
-	    challenge_id: string;
-	    content: string;
-	    cost: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new AddHintRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.challenge_id = source["challenge_id"];
-	        this.content = source["content"];
-	        this.cost = source["cost"];
-	    }
-	}
 	export class BanMemberRequest {
 	    member_id: string;
 	    reason?: string;

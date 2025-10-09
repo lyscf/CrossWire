@@ -168,16 +168,17 @@ const handleAssign = async (members) => {
   }
 }
 
-const handleSubmit = async (flag) => {
+const handleSubmit = async (payload) => {
   if (!selectedChallengeId.value) return
+  const flag = typeof payload === 'string' ? payload : payload?.flag
+  if (!flag) {
+    message.warning('请输入 Flag')
+    return
+  }
   try {
     console.log('Submitting flag:', flag)
     const result = await submitFlag(selectedChallengeId.value, flag)
-    if (result.correct) {
-      message.success('Flag 正确！恭喜你！')
-    } else {
-      message.error('Flag 错误，请重试')
-    }
+    message.success(result?.message || 'Flag 提交成功')
     await loadChallenges()
   } catch (e) {
     console.error('Failed to submit flag:', e)
@@ -197,19 +198,26 @@ const loadChallenges = async () => {
     console.log('Loaded challenges:', list)
     
     if (Array.isArray(list)) {
-      challenges.value = list.map(c => ({
-        id: c.id || c.ID,
-        title: c.title || c.Title || '未命名题目',
-        category: c.category || c.Category || 'Misc',
-        difficulty: c.difficulty || c.Difficulty || 'Medium',
-        points: c.points || c.Points || 100,
-        status: c.status || c.Status || 'pending',
-        assignedTo: c.assigned_to || c.AssignedTo || [],
-        progress: c.progress || c.Progress || 0,
-        solvedBy: c.solved_by || c.SolvedBy || null,
-        description: c.description || c.Description || '',
-        flag: c.flag || c.Flag || ''
-      }))
+      challenges.value = list.map(c => {
+        const solvedByArr = c.solved_by || c.SolvedBy || []
+        const isSolved = (c.is_solved ?? c.IsSolved) ?? (Array.isArray(solvedByArr) && solvedByArr.length > 0)
+        let status = c.status || c.Status || 'pending'
+        if (status === 'open') status = isSolved ? 'solved' : 'in_progress'
+        return {
+          id: c.id || c.ID,
+          title: c.title || c.Title || '未命名题目',
+          category: c.category || c.Category || 'Misc',
+          difficulty: c.difficulty || c.Difficulty || 'Medium',
+          points: c.points || c.Points || 100,
+          status,
+          isSolved: !!isSolved,
+          assignedTo: c.assigned_to || c.AssignedTo || [],
+          progress: c.progress || c.Progress || 0,
+          solvedBy: solvedByArr,
+          description: c.description || c.Description || '',
+          flag: c.flag || c.Flag || ''
+        }
+      })
     }
     
     if (challenges.value.length === 0) {

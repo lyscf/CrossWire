@@ -148,16 +148,23 @@ func (t *ARPTransport) Init(config *Config) error {
 	t.pendingAcks = make(map[uint32]*pendingAck)
 
 	// 获取网卡信息
+	fmt.Printf("[ARPTransport] Init: Looking for interface '%s'\n", config.Interface)
+
 	iface, err := net.InterfaceByName(config.Interface)
 	if err != nil {
 		// 列出所有可用接口以帮助调试
 		allIfaces, _ := net.Interfaces()
-		availableNames := make([]string, 0)
-		for _, i := range allIfaces {
-			availableNames = append(availableNames, i.Name)
+		fmt.Printf("[ARPTransport] Available net.Interfaces:\n")
+		for i, ifc := range allIfaces {
+			fmt.Printf("  [%d] Name: '%s', MAC: %s, Flags: %v\n",
+				i, ifc.Name, ifc.HardwareAddr, ifc.Flags)
 		}
-		return fmt.Errorf("无法找到网络接口 '%s'。可用接口: %v。错误: %w", config.Interface, availableNames, err)
+		return fmt.Errorf("无法找到网络接口 '%s'。错误: %w", config.Interface, err)
 	}
+
+	fmt.Printf("[ARPTransport] Found interface: Name='%s', MAC=%s, MTU=%d, Flags=%v\n",
+		iface.Name, iface.HardwareAddr, iface.MTU, iface.Flags)
+
 	t.iface = iface
 	t.localMAC = iface.HardwareAddr
 
@@ -166,14 +173,73 @@ func (t *ARPTransport) Init(config *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to get addresses: %w", err)
 	}
+
+	fmt.Printf("[ARPTransport] Interface addresses:\n")
 	for _, addr := range addrs {
+		fmt.Printf("  - %s\n", addr.String())
 		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
 			t.localIP = ipnet.IP
+			fmt.Printf("[ARPTransport] Selected IPv4: %s\n", t.localIP)
 			break
 		}
 	}
 
+	if t.localIP == nil {
+		fmt.Printf("[ARPTransport] Warning: No IPv4 address found on interface\n")
+	}
+
 	return nil
+}
+
+// findPcapDeviceName 查找与当前 net.Interface 对应的 pcap 设备名
+// 在 Windows 上，通过匹配 IP 地址或 MAC 地址来找到对应的 pcap 设备
+func (t *ARPTransport) findPcapDeviceName() (string, error) {
+	devices, err := pcap.FindAllDevs()
+	if err != nil {
+		return "", fmt.Errorf("failed to enumerate pcap devices: %w", err)
+	}
+
+	fmt.Printf("[ARPTransport] Searching for pcap device matching interface '%s' (MAC: %s, IP: %s)\n",
+		t.config.Interface, t.localMAC, t.localIP)
+	fmt.Printf("[ARPTransport] Available pcap devices:\n")
+
+	var candidateDevice *pcap.Interface
+
+	for _, dev := range devices {
+		fmt.Printf("  Device: %s\n", dev.Name)
+		fmt.Printf("    Description: %s\n", dev.Description)
+
+		// 优先通过 IP 地址匹配
+		if t.localIP != nil {
+			for _, addr := range dev.Addresses {
+				fmt.Printf("    Address: %v\n", addr.IP)
+				if addr.IP != nil && addr.IP.Equal(t.localIP) {
+					fmt.Printf("  ✓ Matched by IP address: %s\n", t.localIP)
+					return dev.Name, nil
+				}
+			}
+		}
+
+		// 如果没找到，记录第一个候选设备（有 IPv4 地址的）
+		if candidateDevice == nil && len(dev.Addresses) > 0 {
+			for _, addr := range dev.Addresses {
+				if addr.IP != nil && addr.IP.To4() != nil {
+					candidateDevice = &dev
+					break
+				}
+			}
+		}
+	}
+
+	// 如果通过 IP 没找到，但有候选设备，使用候选设备
+	if candidateDevice != nil {
+		fmt.Printf("[ARPTransport] Warning: No exact IP match found. Using first available device: %s\n",
+			candidateDevice.Name)
+		return candidateDevice.Name, nil
+	}
+
+	return "", fmt.Errorf("no matching pcap device found for interface '%s' (MAC: %s, IP: %s)",
+		t.config.Interface, t.localMAC, t.localIP)
 }
 
 // Start 启动传输层
@@ -186,16 +252,27 @@ func (t *ARPTransport) Start() error {
 		return fmt.Errorf("transport not initialized")
 	}
 
+	// 在 Windows 上，需要将 net.Interface 名称转换为 pcap 设备名
+	// 因为 net.InterfaceByName 使用友好名称（如"以太网"），
+	// 而 pcap.OpenLive 需要设备名（如"\Device\NPF_{GUID}"）
+	pcapDeviceName, err := t.findPcapDeviceName()
+	if err != nil {
+		return fmt.Errorf("无法找到对应的 pcap 设备: %w", err)
+	}
+
+	fmt.Printf("[ARPTransport] Using pcap device: '%s'\n", pcapDeviceName)
+	fmt.Printf("[ARPTransport] Interface MAC: %s, IP: %s\n", t.localMAC, t.localIP)
+
 	// 打开pcap句柄（原始以太网包）
 	// 注意：需要管理员/root权限
 	handle, err := pcap.OpenLive(
-		t.config.Interface,
+		pcapDeviceName,
 		65536, // 快照长度
 		true,  // 混杂模式
 		pcap.BlockForever,
 	)
 	if err != nil {
-		return fmt.Errorf("打开网络接口失败（可能需要管理员权限）: %w", err)
+		return fmt.Errorf("打开网络接口失败（可能需要管理员权限）。pcap设备: '%s'。错误: %w", pcapDeviceName, err)
 	}
 	t.handle = handle
 

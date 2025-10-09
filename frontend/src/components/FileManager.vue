@@ -352,6 +352,21 @@ onMounted(() => {
       message.info(`文件已删除: ${data.filename || removed[0]?.name || fileId}`)
     }
   })
+
+  // 监听来自 NotificationCenter 的全局删除事件（用于其他来源触发）
+  window.addEventListener('cw:file:deleted', (e) => {
+    const detail = e?.detail || {}
+    const fileId = detail.fileId
+    if (!fileId) return
+    const idx = files.value.findIndex(f => f.id === fileId)
+    if (idx !== -1) {
+      files.value.splice(idx, 1)
+    }
+    if (selectedFile.value?.id === fileId) {
+      selectedFile.value = null
+      showDetails.value = false
+    }
+  })
 })
 
 const columns = [

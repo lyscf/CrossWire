@@ -36,7 +36,6 @@ type Challenge struct {
 	Assignments []*ChallengeAssignment `gorm:"foreignKey:ChallengeID" json:"assignments,omitempty"`
 	Progress    []*ChallengeProgress   `gorm:"foreignKey:ChallengeID" json:"progress,omitempty"`
 	Submissions []*ChallengeSubmission `gorm:"foreignKey:ChallengeID" json:"submissions,omitempty"`
-	Hints       []*ChallengeHint       `gorm:"foreignKey:ChallengeID" json:"hints,omitempty"`
 }
 
 // TableName 指定表名
@@ -169,31 +168,3 @@ func (c *ChallengeSubmission) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// ChallengeHint 题目提示
-type ChallengeHint struct {
-	ID          string      `gorm:"primaryKey;type:text" json:"id"`
-	ChallengeID string      `gorm:"type:text;not null;index:idx_hints_challenge" json:"challenge_id"`
-	OrderNum    int         `gorm:"type:integer;not null;uniqueIndex:idx_challenge_order" json:"order_num"`
-	Content     string      `gorm:"type:text;not null" json:"content"`
-	Cost        int         `gorm:"type:integer;default:0" json:"cost"`
-	UnlockedBy  StringArray `gorm:"type:text" json:"unlocked_by,omitempty"`
-	CreatedBy   string      `gorm:"type:text;not null" json:"created_by"`
-	CreatedAt   time.Time   `gorm:"not null" json:"created_at"`
-
-	// 关联
-	Challenge *Challenge `gorm:"foreignKey:ChallengeID;constraint:OnDelete:CASCADE" json:"-"`
-	Creator   *Member    `gorm:"foreignKey:CreatedBy;constraint:OnDelete:SET NULL" json:"-"`
-}
-
-// TableName 指定表名
-func (ChallengeHint) TableName() string {
-	return "challenge_hints"
-}
-
-// BeforeCreate GORM 钩子
-func (c *ChallengeHint) BeforeCreate(tx *gorm.DB) error {
-	if c.CreatedAt.IsZero() {
-		c.CreatedAt = time.Now()
-	}
-	return nil
-}

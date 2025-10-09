@@ -137,7 +137,7 @@ func (cm *ChallengeManager) GetChallenge(challengeID string) (*models.Challenge,
 
 // SubmitFlag 提交Flag
 func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
-	cm.client.logger.Info("[ChallengeManager] Submitting flag for challenge: %s", challengeID)
+	cm.client.logger.Info("[ChallengeManager] SubmitFlag: challengeID=%s memberID=%s", challengeID, cm.client.memberID)
 
 	// 检查挑战是否存在
 	challenge, ok := cm.GetChallenge(challengeID)
@@ -170,6 +170,7 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 
 	encrypted, err := cm.client.crypto.EncryptMessage(payload)
 	if err != nil {
+		cm.client.logger.Error("[ChallengeManager] Encrypt submission failed: %v", err)
 		return fmt.Errorf("failed to encrypt submission: %w", err)
 	}
 
@@ -183,6 +184,7 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 	}
 
 	if err := cm.client.transport.SendMessage(msg); err != nil {
+		cm.client.logger.Error("[ChallengeManager] Send submission failed: %v", err)
 		return fmt.Errorf("failed to send submission: %w", err)
 	}
 
@@ -207,50 +209,7 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 	return nil
 }
 
-// RequestHint 请求提示
-func (cm *ChallengeManager) RequestHint(challengeID string, hintIndex int) error {
-	cm.client.logger.Info("[ChallengeManager] Requesting hint %d for challenge: %s", hintIndex, challengeID)
-
-	// 检查挑战是否存在
-	if _, ok := cm.GetChallenge(challengeID); !ok {
-		return fmt.Errorf("challenge not found: %s", challengeID)
-	}
-
-	// 构造提示请求
-	request := map[string]interface{}{
-		"type":         "challenge.hint",
-		"challenge_id": challengeID,
-		"hint_index":   hintIndex,
-		"timestamp":    time.Now().Unix(),
-	}
-
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return fmt.Errorf("failed to marshal hint request: %w", err)
-	}
-
-	encrypted, err := cm.client.crypto.EncryptMessage(payload)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt hint request: %w", err)
-	}
-
-	// 发送请求
-	msg := &transport.Message{
-		ID:        uuid.New().String(),
-		Type:      transport.MessageTypeControl,
-		SenderID:  cm.client.memberID,
-		Payload:   encrypted,
-		Timestamp: time.Now(),
-	}
-
-	if err := cm.client.transport.SendMessage(msg); err != nil {
-		return fmt.Errorf("failed to send hint request: %w", err)
-	}
-
-	cm.client.logger.Debug("[ChallengeManager] Hint requested for challenge: %s", challengeID)
-
-	return nil
-}
+// 提示功能已移除（协作平台不支持提示）
 
 // GetSubmissions 获取我的所有提交记录
 func (cm *ChallengeManager) GetSubmissions() []*models.ChallengeSubmission {

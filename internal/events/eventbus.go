@@ -66,13 +66,12 @@ const (
 	EventSystemMessage EventType = "system:message"
 
 	// ===== CTF挑战相关事件 =====
-	EventChallengeCreated    EventType = "challenge:created"   // 题目创建
-	EventChallengeAssigned   EventType = "challenge:assigned"  // 题目分配
-	EventChallengeSubmitted  EventType = "challenge:submitted" // Flag提交
-	EventChallengeSolved     EventType = "challenge:solved"    // 题目完成
-	EventChallengeHintUnlock EventType = "challenge:hint"      // 提示解锁
-	EventChallengeProgress   EventType = "challenge:progress"  // 题目进度更新
-	EventChallengeUpdated    EventType = "challenge:updated"   // 题目更新
+	EventChallengeCreated   EventType = "challenge:created"   // 题目创建
+	EventChallengeAssigned  EventType = "challenge:assigned"  // 题目分配
+	EventChallengeSubmitted EventType = "challenge:submitted" // Flag提交
+	EventChallengeSolved    EventType = "challenge:solved"    // 题目完成
+	EventChallengeProgress  EventType = "challenge:progress"  // 题目进度更新
+	EventChallengeUpdated   EventType = "challenge:updated"   // 题目更新
 )
 
 // Event 事件

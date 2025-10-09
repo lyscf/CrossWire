@@ -27,12 +27,19 @@
         </a-space>
       </div>
 
-      <!-- 状态和进度 -->
+      <!-- 状态、Flag 与进度 -->
       <div class="card-status">
         <div class="status-text">
           <span :style="{ color: getStatusColor(challenge.status) }">
             {{ getStatusText(challenge.status) }}
           </span>
+          <template v-if="challenge.isSolved && challenge.flag">
+            <a-tag color="success" style="margin-left: 8px">已解出</a-tag>
+            <code class="flag-text">{{ challenge.flag }}</code>
+          </template>
+          <template v-else>
+            <a-tag color="default" style="margin-left: 8px">未解出</a-tag>
+          </template>
         </div>
         <div v-if="challenge.progress > 0" class="progress-bar">
           <a-progress
@@ -182,6 +189,15 @@ const getStatusText = (status) => {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid #f0f0f0;
+}
+
+.flag-text {
+  margin-left: 6px;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  background-color: #f5f5f5;
+  padding: 0 6px;
+  border-radius: 3px;
 }
 </style>
 

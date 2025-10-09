@@ -385,18 +385,19 @@ func (c *Client) initTransport() error {
 func (c *Client) joinChannel() error {
 	c.logger.Info("[Client] Joining channel: %s", c.config.ChannelID)
 
-	// TODO: 生成临时的用户密钥对（用于接收加密的channel key）
-	// 暂时跳过，直接使用密码派生的密钥
+	// 生成临时的用户密钥对（用于将来支持基于X25519的频道密钥加密分发）
+	_, ephPub, _ := c.crypto.GenerateX25519KeyPair()
 
 	// 构造加入请求
 	joinReq := map[string]interface{}{
-		"type":       "auth.join",
-		"channel_id": c.config.ChannelID,
-		"nickname":   c.config.Nickname,
-		"avatar":     c.config.Avatar,
-		"role":       c.config.Role,
-		"public_key": c.publicKey, // 发送公钥用于验证签名
-		"timestamp":  time.Now().Unix(),
+		"type":             "auth.join",
+		"channel_id":       c.config.ChannelID,
+		"nickname":         c.config.Nickname,
+		"avatar":           c.config.Avatar,
+		"role":             c.config.Role,
+		"public_key":       c.publicKey, // 发送公钥用于验证签名
+		"ephemeral_pubkey": ephPub,      // 可选：服务端可用其加密敏感数据
+		"timestamp":        time.Now().Unix(),
 	}
 
 	// 序列化
@@ -418,14 +419,34 @@ func (c *Client) joinChannel() error {
 		Timestamp: time.Now(),
 	}
 
+	// 订阅一次性加入事件用于同步等待
+	done := make(chan struct{}, 1)
+	subID := c.eventBus.Subscribe(events.EventMemberJoined, func(ev *events.Event) {
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+	})
+
 	if err := c.transport.SendMessage(msg); err != nil {
 		return fmt.Errorf("failed to send join request: %w", err)
 	}
 
 	c.logger.Info("[Client] Join request sent, waiting for response...")
 
-	// TODO: 等待加入响应（通过receiveManager接收）
-	// 暂时假设成功
+	// 等待加入响应（通过receiveManager接收）
+	timeout := c.config.JoinTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	select {
+	case <-done:
+		// 成功
+	case <-time.After(timeout):
+		c.eventBus.Unsubscribe(subID)
+		return fmt.Errorf("join response timeout")
+	}
+	c.eventBus.Unsubscribe(subID)
 
 	return nil
 }
@@ -496,12 +517,18 @@ func (c *Client) SendMessageToChannel(content string, msgType models.MessageType
 		Timestamp: time.Now(),
 	}
 
-	// 根据类型填充内容（简化：仅文本）
-	if msgType == models.MessageTypeText {
-		msg.Content = models.MessageContent{
-			"text":   content,
-			"format": "plain",
-		}
+	// 根据类型填充内容
+	switch msgType {
+	case models.MessageTypeText:
+		msg.Content = models.MessageContent{"text": content, "format": "plain"}
+		msg.ContentText = content
+	case models.MessageTypeCode:
+		msg.Content = models.MessageContent{"language": "plain", "code": content}
+		msg.ContentText = content
+	case models.MessageTypeSystem:
+		msg.Content = models.MessageContent{"event": "system_message", "message": content}
+	default:
+		msg.Content = models.MessageContent{"text": content}
 		msg.ContentText = content
 	}
 
@@ -1024,11 +1051,6 @@ func (c *Client) GetSubChannels() ([]*models.Channel, error) {
 // SubmitFlag 提交Flag
 func (c *Client) SubmitFlag(challengeID string, flag string) error {
 	return c.challengeManager.SubmitFlag(challengeID, flag)
-}
-
-// RequestHint 请求提示
-func (c *Client) RequestHint(challengeID string, hintIndex int) error {
-	return c.challengeManager.RequestHint(challengeID, hintIndex)
 }
 
 // GetChallengeSubmissions 获取提交记录

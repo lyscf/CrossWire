@@ -29,6 +29,7 @@ type Message struct {
 	Deleted    bool      `gorm:"type:integer;default:0;index:idx_messages_deleted" json:"deleted"`
 	DeletedBy  string    `gorm:"type:text" json:"deleted_by,omitempty"`
 	DeletedAt  time.Time `gorm:"not null" json:"deleted_at"`
+	EditedAt   time.Time `gorm:"not null" json:"edited_at"`
 	Timestamp  time.Time `gorm:"not null;index:idx_messages_channel_time" json:"timestamp"`
 	Encrypted  bool      `gorm:"type:integer;default:1" json:"encrypted"`
 	KeyVersion int       `gorm:"type:integer;default:1" json:"key_version"`
@@ -58,6 +59,10 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 	if m.DeletedAt.IsZero() {
 		m.DeletedAt = time.Now()
 	}
+	if m.EditedAt.IsZero() {
+		// 初始化为创建时间，满足 NOT NULL 约束
+		m.EditedAt = m.Timestamp
+	}
 	if m.RoomType == "" {
 		m.RoomType = "main"
 	}
@@ -79,6 +84,9 @@ func (m *Message) BeforeUpdate(tx *gorm.DB) error {
 	// 同步兼容字段
 	m.IsDeleted = m.Deleted
 	m.IsPinned = m.Pinned
+	if m.EditedAt.IsZero() {
+		m.EditedAt = time.Now()
+	}
 	return nil
 }
 

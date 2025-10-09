@@ -267,7 +267,7 @@ const closeSearch = () => {
   position: relative;
   width: 100%;
   max-width: 600px;
-  padding: var(--spacing-xs) 0; /* 添加上下padding */
+  /* 移除上下 padding，避免与左侧标题/状态垂直不对齐 */
 }
 
 .search-input {

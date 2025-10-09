@@ -45,7 +45,6 @@ type DiscoveryStats struct {
 	TotalScans        int64
 	ServersDiscovered int64
 	LastScanTime      time.Time
-	mutex             sync.RWMutex
 }
 
 // NewDiscoveryManager 创建服务发现管理器
@@ -170,8 +169,8 @@ func (dm *DiscoveryManager) peerInfoToServer(peer *transport.PeerInfo) *Discover
 		TXT:             make(map[string]string),
 	}
 
-	// 解析元数据（如果存在）
-	// TODO: 当transport.PeerInfo添加Metadata字段后，解析它
+	// 解析元数据（如果 transport 提供）
+	// 目前 PeerInfo 未包含 Metadata 字段，保留占位
 
 	return server
 }

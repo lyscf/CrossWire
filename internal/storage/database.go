@@ -177,7 +177,6 @@ func (db *Database) migrateChannelDB() error {
 		&models.ChallengeAssignment{},
 		&models.ChallengeProgress{},
 		&models.ChallengeSubmission{},
-		&models.ChallengeHint{},
 	); err != nil {
 		return err
 	}

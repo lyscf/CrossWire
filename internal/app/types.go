@@ -71,20 +71,21 @@ type ClientStatus struct {
 
 // MessageDTO 消息数据传输对象
 type MessageDTO struct {
-	ID         string                 `json:"id"`
-	ChannelID  string                 `json:"channel_id"`
-	SenderID   string                 `json:"sender_id"`
-	SenderName string                 `json:"sender_name"`
-	Type       models.MessageType     `json:"type"`
-	Content    map[string]interface{} `json:"content"`
-	Timestamp  int64                  `json:"timestamp"` // Unix timestamp
-	IsDeleted  bool                   `json:"is_deleted"`
-	IsPinned   bool                   `json:"is_pinned"`
-	ReplyToID  *string                `json:"reply_to_id,omitempty"`
-	Reactions  []MessageReaction      `json:"reactions"`
+	ID         string                `json:"id"`
+	ChannelID  string                `json:"channel_id"`
+	SenderID   string                `json:"sender_id"`
+	SenderName string                `json:"sender_name"`
+	Type       models.MessageType    `json:"type"`
+	Content    models.MessageContent `json:"content"`
+	Timestamp  int64                 `json:"timestamp"`
+	EditedAt   int64                 `json:"edited_at"`
+	IsDeleted  bool                  `json:"is_deleted"`
+	IsPinned   bool                  `json:"is_pinned"`
+	ReplyToID  *string               `json:"reply_to_id"`
+	Reactions  []MessageReaction     `json:"reactions"`
 }
 
-// MessageReaction 消息反应
+// MessageReaction 聚合结构
 type MessageReaction struct {
 	Emoji   string   `json:"emoji"`
 	UserIDs []string `json:"user_ids"`
@@ -235,28 +236,19 @@ type BanMemberRequest struct {
 
 // ChallengeDTO 题目数据传输对象
 type ChallengeDTO struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Category     string    `json:"category"`
-	Difficulty   string    `json:"difficulty"`
-	Points       int       `json:"points"`
-	Flag         string    `json:"flag"`
-	IsSolved     bool      `json:"is_solved"`
-	SolvedBy     []string  `json:"solved_by"`
-	Hints        []HintDTO `json:"hints"`
-	AssignedTo   []string  `json:"assigned_to"`
-	SubChannelID string    `json:"sub_channel_id,omitempty"` // 题目专属子频道ID
-	CreatedAt    int64     `json:"created_at"`               // Unix timestamp
-	UpdatedAt    int64     `json:"updated_at"`               // Unix timestamp
-}
-
-// HintDTO 提示数据传输对象
-type HintDTO struct {
-	ID         string `json:"id"`
-	Content    string `json:"content"`
-	Cost       int    `json:"cost"`
-	IsUnlocked bool   `json:"is_unlocked"`
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Category     string   `json:"category"`
+	Difficulty   string   `json:"difficulty"`
+	Points       int      `json:"points"`
+	Flag         string   `json:"flag"`
+	IsSolved     bool     `json:"is_solved"`
+	SolvedBy     []string `json:"solved_by"`
+	AssignedTo   []string `json:"assigned_to"`
+	SubChannelID string   `json:"sub_channel_id,omitempty"` // 题目专属子频道ID
+	CreatedAt    int64    `json:"created_at"`               // Unix timestamp
+	UpdatedAt    int64    `json:"updated_at"`               // Unix timestamp
 }
 
 // SubChannelDTO 子频道数据传输对象
@@ -309,12 +301,7 @@ type UpdateProgressRequest struct {
 	Summary     string `json:"summary"`
 }
 
-// AddHintRequest 添加提示请求
-type AddHintRequest struct {
-	ChallengeID string `json:"challenge_id"`
-	Content     string `json:"content"`
-	Cost        int    `json:"cost"`
-}
+// 提示相关类型已移除（协作平台不支持提示）
 
 // LeaderboardEntry 排行榜条目
 type LeaderboardEntry struct {

@@ -75,52 +75,16 @@
       </a-layout-sider>
 
       <a-layout>
-        <!-- 顶部栏 -->
-        <a-layout-header class="chat-header">
-          <Toolbar :gap="12" :height="64" padding-x="16px" background="#fff" :border="true">
-            <template #left>
-              <h3 class="current-channel">{{ currentChannelLabel }}</h3>
-              <a-tag color="green">
-                <CheckCircleOutlined /> 已连接
-              </a-tag>
-            </template>
-            <template #center>
-              <div class="header-center">
-                <SearchBar />
-              </div>
-            </template>
-            <template #right>
-              <a-space :size="8">
-                <NotificationCenter />
-                <a-tooltip title="文件管理">
-                  <a-button type="text" :icon="h(FileOutlined)" @click="fileManagerVisible = true" />
-                </a-tooltip>
-                <a-tooltip title="成员列表">
-                  <a-button type="text" :icon="h(TeamOutlined)" @click="memberDrawerVisible = true" />
-                </a-tooltip>
-                <a-dropdown>
-                  <a-avatar style="cursor: pointer; background-color: #1890ff" @click="userProfileVisible = true">
-                    {{ currentUser.name[0].toUpperCase() }}
-                  </a-avatar>
-                  <template #overlay>
-                    <a-menu>
-                      <a-menu-item @click="userProfileVisible = true">
-                        <UserOutlined /> 个人资料
-                      </a-menu-item>
-                      <a-menu-item @click="settingsVisible = true">
-                        <SettingOutlined /> 设置
-                      </a-menu-item>
-                      <a-menu-divider />
-                      <a-menu-item danger @click="handleDisconnect">
-                        <PoweroffOutlined /> 断开连接
-                      </a-menu-item>
-                    </a-menu>
-                  </template>
-                </a-dropdown>
-              </a-space>
-            </template>
-          </Toolbar>
-        </a-layout-header>
+        <Headbar
+          :current-channel-label="currentChannelLabel"
+          :current-user="currentUser"
+          :connected="true"
+          @open-file-manager="fileManagerVisible = true"
+          @open-member-drawer="memberDrawerVisible = true"
+          @open-user-profile="userProfileVisible = true"
+          @open-settings="settingsVisible = true"
+          @disconnect="handleDisconnect"
+        />
 
         <!-- 主内容区 -->
         <a-layout-content class="chat-content">
@@ -183,36 +147,30 @@
 
 <script setup>
 import { ref, reactive, h, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   WechatOutlined,
   CodeOutlined,
-  BugOutlined,
   TrophyOutlined,
   SettingOutlined,
   PoweroffOutlined,
-  CheckCircleOutlined,
-  SearchOutlined,
-  FileOutlined,
-  TeamOutlined,
-  PushpinOutlined,
-  UserOutlined
+  PushpinOutlined
 } from '@ant-design/icons-vue'
 
 import MessageList from '@/components/MessageList.vue'
 import MessageInput from '@/components/MessageInput.vue'
 import MemberList from '@/components/MemberList.vue'
-import SearchBar from '@/components/SearchBar.vue'
-import NotificationCenter from '@/components/NotificationCenter.vue'
+import Headbar from '@/components/Headbar.vue'
 import FileManager from '@/components/FileManager.vue'
 import UserProfile from '@/components/UserProfile.vue'
 import Settings from '@/components/Settings.vue'
-import Toolbar from '@/components/Common/Toolbar.vue'
+import { useMemberStore } from '@/stores/member'
 
 const router = useRouter()
+const route = useRoute()
 const collapsed = ref(false)
 const selectedChannels = ref(['main'])
 const currentChannelID = ref('main')
@@ -236,6 +194,7 @@ const pinnedMessages = ref([])
 const messages = ref([])
 const members = ref([])
 const subChannels = ref([])
+const memberStore = useMemberStore()
 
 import { 
   sendMessage, 
@@ -252,28 +211,13 @@ import {
 } from '@/api/app'
 
 const handleSendMessage = async (messageData) => {
-  // messageData 可能是字符串（旧版）或对象（包含 content 和 mentions）
   const content = typeof messageData === 'string' ? messageData : messageData.content
-  const mentions = typeof messageData === 'object' ? messageData.mentions : []
-  
-  const newMessage = {
-    id: Date.now().toString(),
-    senderId: 'me',
-    senderName: currentUser.value.name,
-    senderAvatar: '',
-    content: content,
-    mentions: mentions,
-    timestamp: new Date(),
-    type: 'text'
-  }
-  
-  messages.value.push(newMessage)
-  
   try {
     const channelParam = currentChannelID.value === 'main' ? null : currentChannelID.value
     await sendMessage(content, 'text', channelParam)
+    // 发送成功后立即从后端拉取，使用编辑时间排序
+    await reloadChannelMessages()
   } catch (e) {
-    // 发送失败提示
     message.error('发送失败: ' + (e.message || ''))
   }
 }
@@ -308,6 +252,12 @@ const handleDisconnect = () => {
 
 onMounted(async () => {
   console.log('ChatView mounted, loading data from backend...')
+  // 如果路由带有 channel 参数，切换到该子频道
+  const ch = route.query.channel
+  if (typeof ch === 'string' && ch) {
+    currentChannelID.value = ch
+    selectedChannels.value = [ch]
+  }
   
   // 加载消息
   try {
@@ -353,6 +303,19 @@ onMounted(async () => {
         skills: m.skills || m.Skills || [],
         currentTask: m.current_task || m.CurrentTask || null
       }))
+
+      // 同步到全局成员仓库，供 @提及 使用
+      const storeMembers = members.value.map(m => ({
+        id: m.id,
+        name: m.nickname, // MentionSelector 依赖 name 字段
+        nickname: m.nickname,
+        role: (m.role || '').toString().toLowerCase(),
+        status: (m.status || '').toString().toLowerCase(),
+        online: (m.status || '').toString().toLowerCase() !== 'offline',
+        skills: Array.isArray(m.skills) ? m.skills : [],
+        task: m.currentTask || ''
+      }))
+      memberStore.setMembers(storeMembers)
     }
   } catch (e) {
     console.error('Failed to load members:', e)
@@ -390,26 +353,42 @@ const handleChannelSelect = async (channelId) => {
   selectedChannels.value = [channelId]
   // 重新加载该频道的消息
   try {
-    let list = []
-    try {
-      list = await getMessagesByChannel(channelId, 50, 0)
-    } catch (e) {
-      // 兼容：如果未生成绑定，回退到默认接口
-      list = await getMessages(50, 0)
-    }
-    messages.value = []
-    if (Array.isArray(list)) {
-      list.forEach(m => messages.value.push({
-        id: m.id || m.ID,
-        senderId: m.sender_id || m.SenderID,
-        senderName: m.sender_name || m.SenderName || 'user',
-        content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
-        timestamp: new Date(m.timestamp || m.Timestamp || Date.now()),
-        type: (m.type || m.Type || 'text')
-      }))
-    }
+    await reloadChannelMessages()
   } catch (e) {
     message.warning('加载该频道消息失败')
+  }
+}
+
+const reloadChannelMessages = async () => {
+  let list = []
+  const channelId = currentChannelID.value
+  const useByChannel = channelId !== 'main'
+  try {
+    list = useByChannel ? await getMessagesByChannel(channelId, 200, 0) : await getMessages(200, 0)
+  } catch (e) {
+    list = await getMessages(200, 0)
+  }
+  messages.value = []
+  if (Array.isArray(list)) {
+    const normalized = list.map(m => ({
+      id: m.id || m.ID,
+      senderId: m.sender_id || m.SenderID,
+      senderName: m.sender_name || m.SenderName || 'user',
+      content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+      editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
+      createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
+      type: (m.type || m.Type || 'text')
+    }))
+    // 前端再按 editedAt 升序兜底
+    normalized.sort((a, b) => (a.editedAt || a.createdAt) - (b.editedAt || b.createdAt))
+    messages.value = normalized.map(n => ({
+      id: n.id,
+      senderId: n.senderId,
+      senderName: n.senderName,
+      content: n.content,
+      type: n.type,
+      timestamp: new Date(((n.editedAt || n.createdAt) * 1000) || Date.now())
+    }))
   }
 }
 </script>

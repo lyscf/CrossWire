@@ -38,6 +38,22 @@
 
     <!-- 题目信息 -->
     <div class="detail-content">
+      <!-- 状态与 Flag -->
+      <div class="section">
+        <h3 class="section-title">解题状态</h3>
+        <div class="section-content">
+          <a-space>
+            <a-tag :color="challenge.isSolved ? 'success' : 'default'">
+              {{ challenge.isSolved ? '已解出' : '未解出' }}
+            </a-tag>
+            <template v-if="challenge.isSolved">
+              <span>Flag:</span>
+              <code class="flag-code">{{ displayFlag }}</code>
+              <a-button size="small" @click="copyFlag">复制</a-button>
+            </template>
+          </a-space>
+        </div>
+      </div>
       <!-- 描述 -->
       <div class="section">
         <h3 class="section-title">题目描述</h3>
@@ -94,11 +110,10 @@
             <a-timeline-item
               v-for="sub in submissions"
               :key="sub.id"
-              :color="sub.correct ? 'green' : 'red'"
+              color="blue"
             >
               <p>
-                <strong>{{ sub.submitter }}</strong> 提交了 Flag
-                {{ sub.correct ? '✓ 正确' : '✗ 错误' }}
+                <strong>{{ sub.submitter }}</strong> 提交了 Flag: <code>{{ sub.flag }}</code>
               </p>
               <p class="timeline-time">{{ sub.timestamp }}</p>
             </a-timeline-item>
@@ -144,13 +159,13 @@
       width="80%"
       :body-style="{ padding: 0 }"
     >
-      <ChallengeRoom :challenge="challenge" @back="showRoomDrawer = false" />
+      <ChallengeRoom :challenge="challenge" @back="showRoomDrawer = false" @refresh="onRoomRefresh" />
     </a-drawer>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { Empty, message } from 'ant-design-vue'
 import {
   TrophyOutlined,
@@ -184,6 +199,14 @@ const localProgress = ref(props.challenge.progress || 0)
 const progressData = ref([])
 const submissions = ref([])
 const loading = ref(false)
+const displayFlag = computed(() => {
+  // 优先使用挑战对象上的 flag；否则用最新一次提交中的 flag
+  if (props.challenge?.flag) return props.challenge.flag
+  if (Array.isArray(submissions.value) && submissions.value.length > 0) {
+    return submissions.value[0].flag || ''
+  }
+  return ''
+})
 
 // 加载题目进度数据
 const loadProgressData = async () => {
@@ -194,11 +217,21 @@ const loadProgressData = async () => {
     console.log('Loaded challenge progress:', data)
     if (Array.isArray(data)) {
       progressData.value = data.map(p => ({
-        member: p.member_name || p.MemberName || 'Unknown',
+        memberName: p.member_name || p.MemberName || p.member || p.Member || 'Unknown',
         progress: p.progress || 0,
         status: p.status || 'pending',
-        lastUpdate: p.last_update ? new Date(p.last_update * 1000) : new Date()
+        updatedAt: p.updated_at ? new Date(p.updated_at * 1000) : (p.last_update ? new Date(p.last_update * 1000) : new Date()),
+        summary: p.summary || ''
       }))
+    } else if (data && typeof data === 'object') {
+      const p = data
+      progressData.value = [{
+        memberName: p.member_name || p.member || p.MemberName || p.Member || '我',
+        progress: p.progress || 0,
+        status: p.status || 'pending',
+        updatedAt: (p.updated_at || p.last_update) ? new Date((p.updated_at || p.last_update) * 1000) : new Date(),
+        summary: p.summary || ''
+      }]
     }
   } catch (error) {
     console.error('Failed to load progress data:', error)
@@ -215,13 +248,26 @@ const loadSubmissions = async () => {
     const data = await getChallengeSubmissions(props.challenge.id)
     console.log('Loaded submissions:', data)
     if (Array.isArray(data)) {
-      submissions.value = data.map(s => ({
-        id: s.id || s.ID,
-        member: s.member_name || s.MemberName || 'Unknown',
-        flag: s.flag || '',
-        correct: s.correct || false,
-        submitTime: s.submit_time ? new Date(s.submit_time * 1000) : new Date()
-      }))
+      submissions.value = data.map(s => {
+        const t = s.submitted_at || s.SubmittedAt
+        let ts
+        if (typeof t === 'number') {
+          ts = new Date(t * 1000)
+        } else if (typeof t === 'string') {
+          const d = new Date(t)
+          ts = isNaN(d.getTime()) ? new Date() : d
+        } else if (t instanceof Date) {
+          ts = t
+        } else {
+          ts = new Date()
+        }
+        return {
+          id: s.id || s.ID,
+          submitter: s.member_name || s.MemberName || s.member_id || s.MemberID || 'Unknown',
+          flag: s.flag || s.Flag || '',
+          timestamp: ts
+        }
+      })
     }
   } catch (error) {
     console.error('Failed to load submissions:', error)
@@ -266,8 +312,11 @@ const getDifficultyColor = (difficulty) => {
 }
 
 const handleAssignOk = (data) => {
-  message.success(`已分配给 ${data.members.length} 个成员`)
-  emit('assign', data)
+  const memberIds = Array.isArray(data?.members) ? data.members : []
+  if (memberIds.length > 0) {
+    message.success(`已分配给 ${memberIds.length} 个成员`)
+  }
+  emit('assign', memberIds)
 }
 
 const handleSubmitOk = (data) => {
@@ -280,7 +329,34 @@ const handleProgressChange = (value) => {
 }
 
 const goToRoom = () => {
-  showRoomDrawer.value = true
+  // 如果有子频道ID，则切换 ChatView 的当前频道；否则回退为抽屉
+  const subId = props.challenge?.sub_channel_id || props.challenge?.SubChannelID
+  if (subId) {
+    // 通过 hash 路由附带参数，ChatView 可读取并切换
+    window.location.hash = `#/chat?channel=${encodeURIComponent(subId)}`
+  } else {
+    showRoomDrawer.value = true
+  }
+}
+
+const copyFlag = async () => {
+  try {
+    const flag = displayFlag.value
+    if (!flag) {
+      message.warning('无可复制的 Flag')
+      return
+    }
+    await navigator.clipboard.writeText(flag)
+    message.success('Flag 已复制到剪贴板')
+  } catch (e) {
+    message.error('复制失败')
+  }
+}
+
+const onRoomRefresh = () => {
+  // 重新加载进度与提交记录，让 UI 反映“已解出/flag”
+  loadProgressData()
+  loadSubmissions()
 }
 </script>
 
@@ -335,6 +411,13 @@ const goToRoom = () => {
   font-size: 12px;
   color: rgba(0, 0, 0, 0.45);
   margin: 4px 0 0 0;
+}
+
+.flag-code {
+  font-family: 'Consolas', monospace;
+  background-color: #f5f5f5;
+  padding: 2px 6px;
+  border-radius: 3px;
 }
 </style>
 

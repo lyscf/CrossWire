@@ -10,7 +10,7 @@ import (
 func (a *App) SendMessage(req SendMessageRequest) Response {
 	a.mu.RLock()
 	mode := a.mode
-	_ = a.server
+	srv := a.server
 	cli := a.client
 	a.mu.RUnlock()
 
@@ -28,8 +28,8 @@ func (a *App) SendMessage(req SendMessageRequest) Response {
 	if req.ChannelID != nil && *req.ChannelID != "" {
 		targetChannelID = *req.ChannelID
 	} else {
-		if mode == ModeServer && a.server != nil {
-			ch, _ := a.server.GetChannel()
+		if mode == ModeServer && srv != nil {
+			ch, _ := srv.GetChannel()
 			if ch != nil {
 				targetChannelID = ch.ID
 			}
@@ -42,21 +42,33 @@ func (a *App) SendMessage(req SendMessageRequest) Response {
 	var err error
 	if mode == ModeClient && cli != nil {
 		if targetChannelID == "" {
+			a.logger.Warn("[App] targetChannelID empty in client mode, defaulting to client channel")
 			err = cli.SendMessage(req.Content, req.Type)
 		} else {
 			err = cli.SendMessageToChannel(req.Content, req.Type, targetChannelID)
 		}
-	} else if mode == ModeServer {
-		// 服务端暂不直接发送用户消息
-		return NewErrorResponse("invalid_mode", "服务端不支持直接发送", "")
+	} else if mode == ModeServer && srv != nil {
+		// 允许服务端直接发送
+		var replyTo *string
+		if req.ReplyToID != nil && *req.ReplyToID != "" {
+			replyTo = req.ReplyToID
+		}
+		// 始终使用服务端当前频道，避免外键失败
+		if ch, _ := srv.GetChannel(); ch != nil {
+			targetChannelID = ch.ID
+		}
+		a.logger.Debug("[App] Server SendMessage type=%s channel=%s replyTo=%v", string(req.Type), targetChannelID, replyTo)
+		_, err = srv.SendUserMessage(req.Content, req.Type, targetChannelID, replyTo)
 	} else {
 		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
 	}
 
 	if err != nil {
+		a.logger.Error("[App] SendMessage failed: %v (mode=%s, channel=%s)", err, mode, targetChannelID)
 		return NewErrorResponse("send_error", "消息发送失败", err.Error())
 	}
 
+	a.logger.Info("[App] Message sent (mode=%s, channel=%s)", mode, targetChannelID)
 	return NewSuccessResponse(map[string]interface{}{
 		"message": "消息发送成功",
 	})
@@ -66,7 +78,7 @@ func (a *App) SendMessage(req SendMessageRequest) Response {
 func (a *App) SendCodeMessage(req SendCodeRequest) Response {
 	a.mu.RLock()
 	mode := a.mode
-	_ = a.server
+	srv := a.server
 	cli := a.client
 	a.mu.RUnlock()
 
@@ -79,18 +91,23 @@ func (a *App) SendCodeMessage(req SendCodeRequest) Response {
 		return NewErrorResponse("invalid_request", "代码内容不能为空", "")
 	}
 
-	// 简化：客户端以文本发送代码片段（后续可扩展消息格式）
 	var err error
 	if mode == ModeClient && cli != nil {
 		err = cli.SendMessage(req.Code, models.MessageTypeCode)
+	} else if mode == ModeServer && srv != nil {
+		// 服务端也可发送代码消息，作为文本内容
+		a.logger.Debug("[App] Server SendCodeMessage")
+		_, err = srv.SendUserMessage(req.Code, models.MessageTypeCode, "", nil)
 	} else {
-		return NewErrorResponse("invalid_mode", "仅客户端可发送消息", "")
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
 	}
 
 	if err != nil {
+		a.logger.Error("[App] SendCodeMessage failed: %v (mode=%s)", err, mode)
 		return NewErrorResponse("send_error", "代码消息发送失败", err.Error())
 	}
 
+	a.logger.Info("[App] Code message sent (mode=%s)", mode)
 	return NewSuccessResponse(map[string]interface{}{
 		"message": "代码消息发送成功",
 	})
@@ -257,7 +274,9 @@ func (a *App) PinMessage(req PinMessageRequest) Response {
 	}
 
 	return NewSuccessResponse(map[string]interface{}{
-		"message": "消息已置顶",
+		"message":    "消息已置顶",
+		"message_id": req.MessageID,
+		"reason":     req.Reason,
 	})
 }
 
@@ -277,7 +296,8 @@ func (a *App) UnpinMessage(messageID string) Response {
 	}
 
 	return NewSuccessResponse(map[string]interface{}{
-		"message": "已取消置顶",
+		"message":    "已取消置顶",
+		"message_id": messageID,
 	})
 }
 
@@ -511,6 +531,7 @@ func (a *App) messageToDTO(msg *models.Message) *MessageDTO {
 		Type:       msg.Type,
 		Content:    msg.Content,
 		Timestamp:  msg.Timestamp.Unix(),
+		EditedAt:   msg.EditedAt.Unix(),
 		IsDeleted:  msg.IsDeleted,
 		IsPinned:   msg.IsPinned,
 		ReplyToID:  msg.ReplyToID,

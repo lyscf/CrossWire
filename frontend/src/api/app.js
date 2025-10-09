@@ -174,8 +174,10 @@ export async function deleteChallenge(challengeId) {
   return unwrap(res)
 }
 
-export async function assignChallenge(challengeId, memberId) {
-  const res = await App.AssignChallenge({ challenge_id: challengeId, member_id: memberId })
+export async function assignChallenge(challengeId, memberIds) {
+  // 兼容单个/数组，Wails端签名为 (string, []string)
+  const ids = Array.isArray(memberIds) ? memberIds : [memberIds]
+  const res = await App.AssignChallenge(challengeId, ids)
   return unwrap(res)
 }
 
@@ -184,8 +186,18 @@ export async function submitFlag(challengeId, flag) {
   return unwrap(res)
 }
 
-export async function getChallengeProgress(challengeId) {
-  const res = await App.GetChallengeProgress(challengeId)
+export async function getChallengeProgress(challengeId, memberId = null) {
+  let effectiveMemberId = memberId
+  if (!effectiveMemberId) {
+    try {
+      const me = await App.GetMyInfo()
+      const data = unwrap(me)
+      effectiveMemberId = data?.id || data?.ID || 'server'
+    } catch (e) {
+      effectiveMemberId = 'server'
+    }
+  }
+  const res = await App.GetChallengeProgress(challengeId, effectiveMemberId)
   return unwrap(res)
 }
 
@@ -201,16 +213,6 @@ export async function getChallengeStats() {
 
 export async function getLeaderboard() {
   const res = await App.GetLeaderboard()
-  return unwrap(res)
-}
-
-export async function addHint(challengeId, content, cost) {
-  const res = await App.AddHint({ challenge_id: challengeId, content, cost })
-  return unwrap(res)
-}
-
-export async function unlockHint(challengeId, hintId) {
-  const res = await App.UnlockHint(challengeId, hintId)
   return unwrap(res)
 }
 

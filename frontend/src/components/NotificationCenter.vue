@@ -142,7 +142,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { Empty } from 'ant-design-vue'
-import { EventsOn } from '@/wailsjs/runtime/runtime'
+import { EventsOn } from '../../wailsjs/runtime/runtime'
 import { getMyInfo } from '@/api/app'
 import { useChallengeStore } from '@/stores/challenge'
 import {
@@ -223,6 +223,20 @@ onMounted(async () => {
         } catch {}
       }
       return
+    }
+
+    // 文件删除事件
+    if (type === 'file:deleted') {
+      const fileId = data.file_id || data.id
+      const filename = data.filename || ''
+      // 通知栏提示
+      if (filename) {
+        notify('文件删除', `已删除: ${filename}`, 'info')
+      } else if (fileId) {
+        notify('文件删除', `文件已删除: ${fileId}`, 'info')
+      }
+      // 可选：发出一个应用内事件，供文件管理器等组件响应
+      window.dispatchEvent(new CustomEvent('cw:file:deleted', { detail: { fileId, filename } }))
     }
 
 

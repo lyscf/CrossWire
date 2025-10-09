@@ -178,9 +178,15 @@ func (rm *ReceiveManager) handleJoinResponse(payload map[string]interface{}) {
 
 	rm.client.logger.Info("[ReceiveManager] Successfully joined channel as: %s", memberID)
 
+	// 尝试构造成员对象
+	member := &models.Member{ID: memberID, ChannelID: rm.client.config.ChannelID, Nickname: "", Status: models.StatusOnline}
+	if nickname, ok := memberData["nickname"].(string); ok {
+		member.Nickname = nickname
+	}
+
 	// 发布加入成功事件
 	rm.client.eventBus.Publish(events.EventMemberJoined, &events.MemberEvent{
-		Member:    nil, // TODO: 构造完整的Member对象
+		Member:    member,
 		Action:    "joined",
 		ChannelID: rm.client.config.ChannelID,
 	})
@@ -521,10 +527,35 @@ func (rm *ReceiveManager) handleMemberStatus(payload map[string]interface{}) {
 // handleMemberJoined 处理成员加入通知
 func (rm *ReceiveManager) handleMemberJoined(payload map[string]interface{}) {
 	rm.client.logger.Debug("[ReceiveManager] Member joined notification")
+	// 解析成员信息并更新本地缓存
+	memberID, _ := payload["member_id"].(string)
+	nickname, _ := payload["nickname"].(string)
+	roleStr, _ := payload["role"].(string)
+	statusStr, _ := payload["status"].(string)
 
-	// TODO: 解析成员信息并更新本地缓存
+	member := &models.Member{
+		ID:         memberID,
+		ChannelID:  rm.client.config.ChannelID,
+		Nickname:   nickname,
+		Role:       models.Role(roleStr),
+		Status:     models.UserStatus(statusStr),
+		JoinedAt:   time.Now(),
+		LastSeenAt: time.Now(),
+	}
+	// 尝试写入/更新数据库
+	if memberID != "" {
+		if existing, err := rm.client.memberRepo.GetByID(memberID); err == nil && existing != nil {
+			existing.Nickname = member.Nickname
+			existing.Role = member.Role
+			existing.Status = member.Status
+			_ = rm.client.memberRepo.Update(existing)
+		} else {
+			_ = rm.client.memberRepo.Create(member)
+		}
+	}
 
 	rm.client.eventBus.Publish(events.EventMemberJoined, &events.MemberEvent{
+		Member:    member,
 		Action:    "joined",
 		ChannelID: rm.client.config.ChannelID,
 	})
@@ -533,10 +564,15 @@ func (rm *ReceiveManager) handleMemberJoined(payload map[string]interface{}) {
 // handleMemberLeft 处理成员离开通知
 func (rm *ReceiveManager) handleMemberLeft(payload map[string]interface{}) {
 	rm.client.logger.Debug("[ReceiveManager] Member left notification")
-
-	// TODO: 解析成员信息并更新本地缓存
+	// 解析成员信息并更新本地缓存
+	memberID, _ := payload["member_id"].(string)
+	if memberID != "" {
+		// 标记离线
+		_ = rm.client.memberRepo.UpdateStatus(memberID, models.StatusOffline)
+	}
 
 	rm.client.eventBus.Publish(events.EventMemberLeft, &events.MemberEvent{
+		Member:    nil,
 		Action:    "left",
 		ChannelID: rm.client.config.ChannelID,
 	})

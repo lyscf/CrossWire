@@ -376,12 +376,20 @@ func (cm *ChannelManager) MuteMember(memberID string, duration time.Duration, re
 
 	// 创建禁言记录
 	expiresAt := time.Now().Add(duration)
+	var durSec *int64
+	if duration > 0 {
+		v := int64(duration.Seconds())
+		durSec = &v
+	}
 	muteRecord := &models.MuteRecord{
 		ChannelID: cm.server.config.ChannelID,
 		MemberID:  memberID,
+		MutedBy:   "server",
 		Reason:    reason,
 		MutedAt:   time.Now(),
+		Duration:  durSec,
 		ExpiresAt: expiresAt,
+		Active:    true,
 	}
 
 	// 保存到数据库
@@ -406,6 +414,51 @@ func (cm *ChannelManager) MuteMember(memberID string, duration time.Duration, re
 	})
 
 	return nil
+}
+
+// CleanExpiredMuteRecords 清理已过期的禁言记录（持久化与内存）
+func (cm *ChannelManager) CleanExpiredMuteRecords() {
+	now := time.Now()
+
+	// 复制ID列表，避免长时间持有锁
+	cm.muteMutex.RLock()
+	ids := make([]string, 0, len(cm.muteRecords))
+	for id := range cm.muteRecords {
+		ids = append(ids, id)
+	}
+	cm.muteMutex.RUnlock()
+
+	for _, memberID := range ids {
+		cm.muteMutex.RLock()
+		rec, ok := cm.muteRecords[memberID]
+		cm.muteMutex.RUnlock()
+		if !ok || rec == nil {
+			continue
+		}
+		if rec.ExpiresAt.IsZero() || now.Before(rec.ExpiresAt) {
+			continue
+		}
+
+		// 标记数据库为未激活
+		if err := cm.server.memberRepo.UnmuteMember(memberID, "system-expired"); err != nil {
+			cm.server.logger.Warn("[ChannelManager] Failed to persist expired unmute for %s: %v", memberID, err)
+		}
+
+		// 从内存移除
+		cm.muteMutex.Lock()
+		delete(cm.muteRecords, memberID)
+		cm.muteMutex.Unlock()
+
+		// 发布事件
+		if member := cm.GetMemberByID(memberID); member != nil {
+			cm.server.eventBus.Publish(events.EventMemberUnmuted, &events.MemberEvent{
+				Member:    member,
+				ChannelID: cm.server.config.ChannelID,
+				Action:    "unmuted",
+				Reason:    "expired",
+			})
+		}
+	}
 }
 
 // UnmuteMember 解除禁言

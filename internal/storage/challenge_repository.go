@@ -222,50 +222,7 @@ func (r *ChallengeRepository) GetMemberSubmissions(memberID string) ([]*models.C
 	return submissions, nil
 }
 
-// AddHint 添加提示
-func (r *ChallengeRepository) AddHint(hint *models.ChallengeHint) error {
-	return r.db.GetChannelDB().Create(hint).Error
-}
-
-// GetHints 获取题目的所有提示
-func (r *ChallengeRepository) GetHints(challengeID string) ([]*models.ChallengeHint, error) {
-	var hints []*models.ChallengeHint
-	err := r.db.GetChannelDB().Where("challenge_id = ?", challengeID).
-		Order("order_num ASC").
-		Find(&hints).Error
-	if err != nil {
-		return nil, err
-	}
-	return hints, nil
-}
-
-// UnlockHint 解锁提示
-func (r *ChallengeRepository) UnlockHint(hintID, memberID string) error {
-	var hint models.ChallengeHint
-	if err := r.db.GetChannelDB().Where("id = ?", hintID).First(&hint).Error; err != nil {
-		return err
-	}
-
-	// 添加到unlocked_by列表
-	unlockedBy := append(hint.UnlockedBy, memberID)
-
-	return r.db.GetChannelDB().Model(&hint).Update("unlocked_by", unlockedBy).Error
-}
-
-// IsHintUnlocked 检查提示是否已解锁
-func (r *ChallengeRepository) IsHintUnlocked(hintID, memberID string) (bool, error) {
-	var hint models.ChallengeHint
-	if err := r.db.GetChannelDB().Where("id = ?", hintID).First(&hint).Error; err != nil {
-		return false, err
-	}
-
-	for _, uid := range hint.UnlockedBy {
-		if uid == memberID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
+// 提示功能已移除（协作平台不支持提示）
 
 // GetChallengeStats 获取题目统计信息
 func (r *ChallengeRepository) GetChallengeStats(channelID string) (map[string]interface{}, error) {

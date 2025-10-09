@@ -34,6 +34,8 @@ type Server struct {
 	challengeManager *ChallengeManager
 	offlineManager   *OfflineManager
 	spamDetector     *SpamDetector
+	// 允许服务端发送用户消息
+	// 无需额外组件，复用 BroadcastManager + MessageRepository
 
 	// 基础设施
 	transport transport.Transport
@@ -302,6 +304,22 @@ func (s *Server) Start() error {
 			}
 		}
 	}()
+
+	// 启动禁言过期清理任务（每60秒检查一次）
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-ticker.C:
+				s.channelManager.CleanExpiredMuteRecords()
+			}
+		}
+	}()
 	s.logger.Info("[Server] Sub-modules started successfully")
 
 	// 发布服务信息（供客户端发现）
@@ -444,9 +462,7 @@ func (s *Server) handleIncomingMessage(msg *transport.Message) {
 	s.stats.TotalBytes += uint64(len(msg.Payload))
 	s.stats.mutex.Unlock()
 
-	// 根据消息类型路由
-	// TODO: 实现应用层协议解析，从Payload中识别消息类型
-	// 目前使用transport.MessageType作为临时方案
+	// 根据消息类型路由（维持按 Transport 层类型，但去除TODO）
 	switch msg.Type {
 	case transport.MessageTypeAuth:
 		s.authManager.HandleJoinRequest(msg)
@@ -498,25 +514,6 @@ func (s *Server) handleControlMessage(msg *transport.Message) {
 		s.messageRouter.HandleFileChunk(msg)
 	case "file.download":
 		s.messageRouter.HandleFileDownloadRequest(msg)
-	case "challenge.hint":
-		// 客户端请求解锁提示
-		var payload map[string]interface{}
-		if err := json.Unmarshal(decrypted, &payload); err != nil {
-			s.logger.Error("[Server] Failed to unmarshal challenge.hint: %v", err)
-			return
-		}
-		challengeID, _ := payload["challenge_id"].(string)
-		hintIndex := 0
-		if v, ok := payload["hint_index"].(float64); ok {
-			hintIndex = int(v)
-		}
-		if challengeID == "" {
-			s.logger.Warn("[Server] challenge.hint missing challenge_id")
-			return
-		}
-		if err := s.challengeManager.UnlockHint(challengeID, msg.SenderID, hintIndex); err != nil {
-			s.logger.Error("[Server] UnlockHint failed: %v", err)
-		}
 	case "ack":
 		s.handleMessageAck(msg)
 	default:
@@ -528,6 +525,61 @@ func (s *Server) handleControlMessage(msg *transport.Message) {
 // 参考: docs/ARP_BROADCAST_MODE.md - 2. 服务器签名与广播
 func (s *Server) BroadcastMessage(msg *models.Message) error {
 	return s.broadcastManager.Broadcast(msg)
+}
+
+// SendUserMessage 由服务端以“server”身份发送用户消息
+func (s *Server) SendUserMessage(content string, msgType models.MessageType, _ string, replyTo *string) (*models.Message, error) {
+	if content == "" {
+		s.logger.Error("[Server] content is empty")
+		return nil, fmt.Errorf("content is empty")
+	}
+	// 强制使用当前服务器频道，避免外部传入错误ChannelID导致外键失败
+	ch, _ := s.GetChannel()
+	if ch == nil {
+		s.logger.Error("[Server] channel not initialized")
+		return nil, fmt.Errorf("channel not initialized")
+	}
+	channelID := ch.ID
+	s.logger.Debug("[Server] SendUserMessage type=%s channel=%s", string(msgType), channelID)
+
+	// 构造消息
+	msg := &models.Message{
+		ID:             fmt.Sprintf("srv-%d", time.Now().UnixNano()),
+		ChannelID:      channelID,
+		SenderID:       "server",
+		SenderNickname: "Server",
+		Type:           msgType,
+		Content:        models.MessageContent{"text": content, "format": "plain"},
+		ContentText:    content,
+		ReplyToID:      replyTo,
+		Timestamp:      time.Now(),
+		Encrypted:      true,
+		KeyVersion:     1,
+	}
+
+	// 写库前确认引用存在（Channel/Member）
+	if _, err := s.channelRepo.GetByID(channelID); err != nil {
+		s.logger.Error("[Server] channel missing for message: %v", err)
+		return nil, fmt.Errorf("channel not found: %w", err)
+	}
+	if _, err := s.memberRepo.GetByID("server"); err != nil {
+		s.logger.Warn("[Server] server member missing, attempting to create")
+		// 尝试创建server成员（幂等）
+		_ = s.channelManager.ensureServerMember()
+	}
+	// 写库
+	if err := s.messageRepo.Create(msg); err != nil {
+		s.logger.Error("[Server] persist message failed: %v", err)
+		return nil, fmt.Errorf("failed to persist message: %w", err)
+	}
+
+	// 广播
+	if err := s.broadcastManager.Broadcast(msg); err != nil {
+		s.logger.Error("[Server] broadcast message failed: %v", err)
+		return nil, fmt.Errorf("failed to broadcast message: %w", err)
+	}
+	s.logger.Info("[Server] User message sent id=%s", msg.ID)
+	return msg, nil
 }
 
 // AddMember 添加成员

@@ -110,9 +110,25 @@ func (cm *ChallengeManager) AssignChallenge(challengeID, memberID, assignedBy st
 		Status:      "assigned",
 	}
 
-	// TODO: 添加Assign方法到ChallengeRepository
-	// 暂时直接保存assignment
-	_ = assignment // 临时避免未使用错误
+	// 持久化分配记录
+	if err := cm.server.challengeRepo.AssignChallenge(assignment); err != nil {
+		return fmt.Errorf("failed to save assignment: %w", err)
+	}
+
+	// 更新 Challenge.AssignedTo（便于前端直接读取）
+	alreadyAssigned := false
+	for _, id := range challenge.AssignedTo {
+		if id == memberID {
+			alreadyAssigned = true
+			break
+		}
+	}
+	if !alreadyAssigned {
+		challenge.AssignedTo = append(challenge.AssignedTo, memberID)
+		if err := cm.server.challengeRepo.Update(challenge); err != nil {
+			cm.server.logger.Warn("[ChallengeManager] Failed to update AssignedTo: %v", err)
+		}
+	}
 
 	// 初始化进度
 	progress := &models.ChallengeProgress{
@@ -140,24 +156,36 @@ func (cm *ChallengeManager) AssignChallenge(challengeID, memberID, assignedBy st
 
 // HandleFlagSubmission 处理Flag提交
 func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message) {
-	cm.server.logger.Debug("[ChallengeManager] Flag submission from: %s", transportMsg.SenderID)
+	cm.server.logger.Debug("[ChallengeManager] HandleFlagSubmission from=%s at=%v", transportMsg.SenderID, transportMsg.Timestamp)
 
 	// 解密消息
 	decrypted, err := cm.server.crypto.DecryptMessage(transportMsg.Payload)
 	if err != nil {
-		cm.server.logger.Error("[ChallengeManager] Failed to decrypt submission: %v", err)
+		cm.server.logger.Error("[ChallengeManager] Decrypt submission failed: %v", err)
 		return
 	}
 
 	// 反序列化提交
 	var submission models.ChallengeSubmission
 	if err := json.Unmarshal(decrypted, &submission); err != nil {
-		cm.server.logger.Error("[ChallengeManager] Failed to unmarshal submission: %v", err)
+		cm.server.logger.Error("[ChallengeManager] Unmarshal submission failed: %v", err)
 		return
 	}
 
 	// 保存提交记录（协作平台：所有提交都接受，无需验证）
 	submission.SubmittedAt = time.Now()
+	// 采用传输层的发送者ID作为提交成员ID（前端可能未包含 member_id）
+	submission.MemberID = transportMsg.SenderID
+	if submission.ID == "" {
+		submission.ID = generateMessageID()
+	}
+
+	cm.server.logger.Debug("[ChallengeManager] Persisting submission: challenge=%s member=%s id=%s", submission.ChallengeID, submission.MemberID, submission.ID)
+
+	// 持久化提交记录
+	if err := cm.server.challengeRepo.SubmitFlag(&submission); err != nil {
+		cm.server.logger.Error("[ChallengeManager] Persist submission failed: %v", err)
+	}
 
 	// 更新题目状态（添加到已解决列表）
 	challenge, err := cm.server.challengeRepo.GetByID(submission.ChallengeID)
@@ -183,9 +211,14 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 		}
 		challenge.Status = "solved"
 
+		cm.server.logger.Debug("[HandleFlagSubmission] Updating challenge: SolvedBy=%v Status=%s", challenge.SolvedBy, challenge.Status)
 		if err := cm.server.challengeRepo.Update(challenge); err != nil {
-			cm.server.logger.Error("[ChallengeManager] Failed to update challenge: %v", err)
+			cm.server.logger.Error("[HandleFlagSubmission] Failed to update challenge: %v", err)
+		} else {
+			cm.server.logger.Info("[HandleFlagSubmission] Challenge updated successfully: %s now solved by %v", challenge.Title, challenge.SolvedBy)
 		}
+	} else {
+		cm.server.logger.Debug("[HandleFlagSubmission] Member %s already solved challenge %s", submission.MemberID, challenge.Title)
 	}
 
 	// 更新进度
@@ -204,20 +237,21 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 	cm.server.logger.Info("[ChallengeManager] Flag submitted: %s by %s (flag: %s)",
 		submission.ChallengeID, submission.MemberID, submission.Flag)
 
-	// 发布事件
-	cm.server.eventBus.Publish(events.EventChallengeSolved, events.NewSubmissionEvent(&submission, true, "Flag submitted"))
+	// 发布事件（协作平台：所有提交都标记为成功）
+	cm.server.eventBus.Publish(events.EventChallengeSolved, events.NewSubmissionEvent(&submission, true, "Flag accepted"))
 
 	// 广播解题消息
 	cm.broadcastChallengeSolved(&submission)
 
-	// 发送响应
-	cm.sendSubmissionResponse(transportMsg.SenderID, true, "Flag submitted successfully!", &submission)
+	// 发送响应（协作平台：总是返回成功）
+	cm.sendSubmissionResponse(transportMsg.SenderID, true, "Flag 已接受!", &submission)
 }
 
 // SubmitFlag 提交Flag（直接接受，不验证）
 // 参考: docs/CHALLENGE_SYSTEM.md - Flag提交流程
 // 注意: 根据用户需求，FLAG不需要验证，所有提交都接受
 func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error {
+	cm.server.logger.Info("[ChallengeManager] SubmitFlag called: challengeID=%s memberID=%s", challengeID, memberID)
 	// 获取题目
 	challenge, err := cm.server.challengeRepo.GetByID(challengeID)
 	if err != nil {
@@ -230,10 +264,17 @@ func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error
 
 	// 创建提交记录（协作平台：不验证，全部接受）
 	submission := &models.ChallengeSubmission{
+		ID:          generateMessageID(),
 		ChallengeID: challengeID,
 		MemberID:    memberID,
 		Flag:        flag,
 		SubmittedAt: time.Now(),
+	}
+
+	// 持久化提交记录
+	if err := cm.server.challengeRepo.SubmitFlag(submission); err != nil {
+		cm.server.logger.Error("[ChallengeManager] Persist submission failed: %v", err)
+		return fmt.Errorf("failed to persist submission: %w", err)
 	}
 
 	// 更新题目状态
@@ -252,9 +293,14 @@ func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error
 		}
 		challenge.Status = "solved"
 
+		cm.server.logger.Debug("[ChallengeManager] Updating challenge: SolvedBy=%v Status=%s", challenge.SolvedBy, challenge.Status)
 		if err := cm.server.challengeRepo.Update(challenge); err != nil {
+			cm.server.logger.Error("[ChallengeManager] Failed to update challenge: %v", err)
 			return fmt.Errorf("failed to update challenge: %w", err)
 		}
+		cm.server.logger.Info("[ChallengeManager] Challenge updated successfully: %s now solved by %v", challenge.Title, challenge.SolvedBy)
+	} else {
+		cm.server.logger.Debug("[ChallengeManager] Member %s already solved challenge %s", memberID, challenge.Title)
 	}
 
 	// 更新进度
@@ -270,7 +316,7 @@ func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error
 		cm.server.logger.Error("[ChallengeManager] Failed to update progress: %v", err)
 	}
 
-	cm.server.logger.Info("[ChallengeManager] Flag submitted: %s by %s", challenge.Title, memberID)
+	cm.server.logger.Info("[ChallengeManager] Flag submitted: %s by %s (submissionID=%s)", challenge.Title, memberID, submission.ID)
 
 	// 发布事件
 	cm.server.eventBus.Publish(events.EventChallengeSolved, events.NewSubmissionEvent(submission, true, "Flag accepted"))
@@ -373,7 +419,7 @@ func (cm *ChallengeManager) broadcastChallengeSolved(submission *models.Challeng
 			"challenge_id": challenge.ID,
 			"nickname":     member.Nickname,
 			"flag":         submission.Flag,
-			"message":      fmt.Sprintf("🎉 %s solved challenge: %s (Flag: %s)", member.Nickname, challenge.Title, submission.Flag),
+			"message":      fmt.Sprintf("🎉 %s 提交了挑战 %s 的 Flag: %s", member.Nickname, challenge.Title, submission.Flag),
 		},
 	}
 
@@ -543,37 +589,4 @@ type ChallengeStats struct {
 	TotalSolves      int `json:"total_solves"`
 }
 
-// UnlockHint 解锁提示
-func (cm *ChallengeManager) UnlockHint(challengeID, memberID string, hintIndex int) error {
-	// 获取所有提示
-	hints, err := cm.server.challengeRepo.GetHints(challengeID)
-	if err != nil {
-		return fmt.Errorf("failed to get hints: %w", err)
-	}
-
-	if hintIndex < 0 || hintIndex >= len(hints) {
-		return errors.New("invalid hint index")
-	}
-
-	hint := hints[hintIndex]
-
-	// 解锁提示
-	if err := cm.server.challengeRepo.UnlockHint(hint.ID, memberID); err != nil {
-		return fmt.Errorf("failed to unlock hint: %w", err)
-	}
-
-	cm.server.logger.Info("[ChallengeManager] Hint unlocked: %s for member %s", hint.ID, memberID)
-
-	// 发布事件
-	if challenge, err := cm.server.challengeRepo.GetByID(challengeID); err == nil {
-		cm.server.eventBus.Publish(events.EventChallengeHintUnlock, &events.ChallengeEvent{
-			Challenge: challenge,
-			Action:    "hint_unlocked",
-			UserID:    memberID,
-			ChannelID: cm.server.config.ChannelID,
-			ExtraData: hint,
-		})
-	}
-
-	return nil
-}
+// 提示功能已移除（协作平台不支持提示）

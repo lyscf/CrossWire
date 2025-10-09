@@ -386,12 +386,12 @@ defineExpose({
 .search-input-wrapper {
   position: relative;
   width: 100%;
-  padding: 2px 0; /* 添加上下padding */
+  /* 移除上下 padding，保证与头部其他元素对齐 */
 }
 
 .search-dropdown {
   position: absolute;
-  top: calc(100% + 6px); /* 增加间距以适应padding */
+  top: calc(100% + 8px); /* 稍微加大与输入框的间距，保持视觉舒适 */
   left: 0;
   right: 0;
   background: white;

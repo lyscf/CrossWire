@@ -261,14 +261,21 @@ func (am *AuthManager) sendJoinResponse(to string, success bool, errorMsg string
 
 // broadcastMemberJoined 广播成员加入
 func (am *AuthManager) broadcastMemberJoined(member *models.Member) {
-	// TODO: 修复Content类型
-	// 创建系统消息
+	// 创建系统消息（使用结构化 SystemContent）
+	content := models.MessageContent{
+		"event":    "member_joined",
+		"actor_id": member.ID,
+		"extra": map[string]interface{}{
+			"nickname":  member.Nickname,
+			"joined_at": time.Now().Unix(),
+		},
+	}
 	systemMsg := &models.Message{
 		ID:        generateMessageID(),
 		ChannelID: am.server.config.ChannelID,
 		SenderID:  "system",
 		Type:      models.MessageTypeSystem,
-		// Content:   fmt.Sprintf("%s joined the channel", member.Nickname),
+		Content:   content,
 		Timestamp: time.Now(),
 	}
 

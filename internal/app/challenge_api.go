@@ -235,6 +235,7 @@ func (a *App) AssignChallenge(challengeID string, memberIDs []string) Response {
 
 // SubmitFlag 提交flag
 func (a *App) SubmitFlag(req SubmitFlagRequest) Response {
+	a.logger.Info("[App] SubmitFlag: challengeID=%s", req.ChallengeID)
 	a.mu.RLock()
 	mode := a.mode
 	srv := a.server
@@ -257,10 +258,24 @@ func (a *App) SubmitFlag(req SubmitFlagRequest) Response {
 	a.logger.Info("Submitting flag for challenge: %s", req.ChallengeID)
 
 	if mode == ModeServer && srv != nil {
-		return NewErrorResponse("invalid_mode", "仅客户端可提交Flag", "")
+		// 允许服务端以“server”成员提交（协作平台：不验证正确性）
+		if err := srv.SubmitFlag(req.ChallengeID, "server", req.Flag); err != nil {
+			a.logger.Error("[App] SubmitFlag failed on server: %v", err)
+			return NewErrorResponse("submit_error", "提交失败", err.Error())
+		}
+		points := 0
+		if ch, err := srv.GetChallenge(req.ChallengeID); err == nil && ch != nil {
+			points = ch.Points
+		}
+		return NewSuccessResponse(SubmitFlagResponse{
+			Success: true,
+			Message: "Flag已提交（服务端）",
+			Points:  points,
+		})
 	}
 	if mode == ModeClient && cli != nil {
 		if err := cli.SubmitFlag(req.ChallengeID, req.Flag); err != nil {
+			a.logger.Error("[App] SubmitFlag failed on client: %v", err)
 			return NewErrorResponse("submit_error", "提交失败", err.Error())
 		}
 		points := 0
@@ -317,37 +332,7 @@ func (a *App) UpdateChallengeProgress(req UpdateProgressRequest) Response {
 	return NewErrorResponse("not_implemented", "客户端进度更新暂未实现", "")
 }
 
-// AddHint 添加提示（已禁用 - 不需要此功能）
-func (a *App) AddHint(req AddHintRequest) Response {
-	return NewErrorResponse("not_supported", "不支持提示功能", "")
-}
-
-// UnlockHint 解锁提示（客户端通过控制消息请求服务端）
-func (a *App) UnlockHint(challengeID string, hintIndex int) Response {
-	a.mu.RLock()
-	mode := a.mode
-	cli := a.client
-	a.mu.RUnlock()
-
-	if !a.isRunning {
-		return NewErrorResponse("not_running", "未连接到频道", "")
-	}
-	if challengeID == "" || hintIndex < 0 {
-		return NewErrorResponse("invalid_request", "challenge_id 或 hint_index 无效", "")
-	}
-
-	if mode != ModeClient || cli == nil {
-		return NewErrorResponse("invalid_mode", "仅客户端可请求解锁提示", "")
-	}
-
-	// 通过客户端管理器请求提示
-	if err := cli.RequestHint(challengeID, hintIndex); err != nil {
-		return NewErrorResponse("request_error", "请求提示失败", err.Error())
-	}
-	return NewSuccessResponse(map[string]interface{}{
-		"message": "已请求解锁提示",
-	})
-}
+// 提示功能已移除（协作平台不支持提示）
 
 // GetLeaderboard 获取排行榜（已禁用 - 不需要此功能）
 func (a *App) GetLeaderboard() Response {
@@ -356,7 +341,69 @@ func (a *App) GetLeaderboard() Response {
 
 // GetChallengeSubmissions 获取题目提交记录（已禁用 - 不需要此功能）
 func (a *App) GetChallengeSubmissions(challengeID string) Response {
-	return NewErrorResponse("not_supported", "不支持提交记录功能", "")
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	if challengeID == "" {
+		return NewErrorResponse("invalid_request", "题目ID不能为空", "")
+	}
+
+	// 服务端直接查询频道数据库
+	if mode == ModeServer && srv != nil {
+		subs, err := a.db.ChallengeRepo().GetSubmissions(challengeID)
+		if err != nil {
+			return NewErrorResponse("query_error", "获取提交记录失败", err.Error())
+		}
+		// 补充成员昵称
+		result := make([]map[string]interface{}, 0, len(subs))
+		for _, sub := range subs {
+			memberName := sub.MemberID
+			if member, err := srv.GetMember(sub.MemberID); err == nil && member != nil {
+				memberName = member.Nickname
+			}
+			result = append(result, map[string]interface{}{
+				"id":           sub.ID,
+				"challenge_id": sub.ChallengeID,
+				"member_id":    sub.MemberID,
+				"member_name":  memberName,
+				"flag":         sub.Flag,
+				"submitted_at": sub.SubmittedAt.Unix(),
+			})
+		}
+		return NewSuccessResponse(result)
+	}
+
+	// 客户端查询本地缓存数据库（若有同步）
+	if mode == ModeClient && cli != nil {
+		subs, err := a.db.ChallengeRepo().GetSubmissions(challengeID)
+		if err != nil {
+			return NewErrorResponse("query_error", "获取提交记录失败", err.Error())
+		}
+		// 客户端也尝试获取昵称（如果有缓存）
+		result := make([]map[string]interface{}, 0, len(subs))
+		for _, sub := range subs {
+			memberName := sub.MemberID
+			// 客户端可能没有完整的成员信息，使用 memberID 作为备用
+			result = append(result, map[string]interface{}{
+				"id":           sub.ID,
+				"challenge_id": sub.ChallengeID,
+				"member_id":    sub.MemberID,
+				"member_name":  memberName,
+				"flag":         sub.Flag,
+				"submitted_at": sub.SubmittedAt.Unix(),
+			})
+		}
+		return NewSuccessResponse(result)
+	}
+
+	return NewErrorResponse("invalid_mode", "无效的运行模式", "")
 }
 
 // GetChallengeStats 获取题目统计信息（已禁用 - 不需要此功能）
@@ -368,17 +415,6 @@ func (a *App) GetChallengeStats() Response {
 
 // challengeToDTO 转换题目模型为DTO
 func (a *App) challengeToDTO(challenge *models.Challenge) *ChallengeDTO {
-	// 转换hints
-	hints := make([]HintDTO, 0, len(challenge.Hints))
-	for _, hint := range challenge.Hints {
-		hints = append(hints, HintDTO{
-			ID:         hint.ID,
-			Content:    hint.Content,
-			Cost:       hint.Cost,
-			IsUnlocked: false, // TODO: 根据当前用户判断是否已解锁
-		})
-	}
-
 	return &ChallengeDTO{
 		ID:           challenge.ID,
 		Title:        challenge.Title,
@@ -389,7 +425,6 @@ func (a *App) challengeToDTO(challenge *models.Challenge) *ChallengeDTO {
 		Flag:         challenge.Flag,
 		IsSolved:     len(challenge.SolvedBy) > 0,
 		SolvedBy:     challenge.SolvedBy,
-		Hints:        hints,
 		AssignedTo:   challenge.AssignedTo,
 		SubChannelID: challenge.SubChannelID,
 		CreatedAt:    challenge.CreatedAt.Unix(),

@@ -472,8 +472,8 @@ func (t *HTTPSTransport) Discover(timeout time.Duration) ([]*PeerInfo, error) {
 
 // Announce 宣告服务
 func (t *HTTPSTransport) Announce(info *ServiceInfo) error {
-	// TODO: 实现服务宣告
-	return fmt.Errorf("not implemented")
+	// HTTPS 模式不参与局域网发现，宣告为无操作以避免上层警告
+	return nil
 }
 
 // ===== 元数据 =====
