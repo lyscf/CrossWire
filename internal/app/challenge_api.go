@@ -322,9 +322,31 @@ func (a *App) AddHint(req AddHintRequest) Response {
 	return NewErrorResponse("not_supported", "不支持提示功能", "")
 }
 
-// UnlockHint 解锁提示（已禁用 - 不需要此功能）
-func (a *App) UnlockHint(challengeID, hintID string) Response {
-	return NewErrorResponse("not_supported", "不支持提示功能", "")
+// UnlockHint 解锁提示（客户端通过控制消息请求服务端）
+func (a *App) UnlockHint(challengeID string, hintIndex int) Response {
+	a.mu.RLock()
+	mode := a.mode
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+	if challengeID == "" || hintIndex < 0 {
+		return NewErrorResponse("invalid_request", "challenge_id 或 hint_index 无效", "")
+	}
+
+	if mode != ModeClient || cli == nil {
+		return NewErrorResponse("invalid_mode", "仅客户端可请求解锁提示", "")
+	}
+
+	// 通过客户端管理器请求提示
+	if err := cli.RequestHint(challengeID, hintIndex); err != nil {
+		return NewErrorResponse("request_error", "请求提示失败", err.Error())
+	}
+	return NewSuccessResponse(map[string]interface{}{
+		"message": "已请求解锁提示",
+	})
 }
 
 // GetLeaderboard 获取排行榜（已禁用 - 不需要此功能）

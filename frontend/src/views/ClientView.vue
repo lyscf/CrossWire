@@ -325,7 +325,7 @@ const handleJoinChannel = async () => {
   align-items: flex-start;
   justify-content: center;
   background-color: #f5f5f5;
-  padding: 40px 20px;
+  padding: var(--spacing-xl) var(--spacing-lg);
   overflow-y: auto;
 }
 
@@ -340,11 +340,11 @@ const handleJoinChannel = async () => {
 }
 
 .scan-section {
-  padding: 20px 0;
+  padding: var(--spacing-lg) 0;
 }
 
 .qrcode-section {
-  padding: 40px 0;
+  padding: var(--spacing-xl) 0;
   text-align: center;
 }
 </style>

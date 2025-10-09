@@ -161,6 +161,19 @@ func (r *MemberRepository) GetMuteRecord(memberID string) (*models.MuteRecord, e
 	return &record, nil
 }
 
+// GetMuteRecords 获取频道的有效禁言记录（active 且未过期）
+func (r *MemberRepository) GetMuteRecords(channelID string) ([]*models.MuteRecord, error) {
+	var records []*models.MuteRecord
+	err := r.db.GetChannelDB().Where("channel_id = ? AND active = ?", channelID, true).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
+		Order("muted_at DESC").
+		Find(&records).Error
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 // TODO: 实现以下方法
 // - GetMembersByRole() 按角色获取成员
 // - SearchMembers() 搜索成员

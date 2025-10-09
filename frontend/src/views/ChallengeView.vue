@@ -246,7 +246,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px;
+  padding: var(--spacing-md);
   border-bottom: 1px solid #f0f0f0;
 }
 
@@ -257,13 +257,13 @@ onMounted(async () => {
 }
 
 .filter-section {
-  padding: 16px;
+  padding: var(--spacing-md);
   border-bottom: 1px solid #f0f0f0;
 }
 
 .challenge-content {
   background: white;
-  padding: 24px;
+  padding: var(--spacing-lg);
   overflow-y: auto;
 }
 </style>

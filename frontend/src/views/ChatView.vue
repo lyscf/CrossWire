@@ -77,48 +77,29 @@
       <a-layout>
         <!-- 顶部栏 -->
         <a-layout-header class="chat-header">
-          <div class="header-container">
-            <div class="header-left">
+          <Toolbar :gap="12" :height="64" padding-x="16px" background="#fff" :border="true">
+            <template #left>
               <h3 class="current-channel">{{ currentChannelLabel }}</h3>
               <a-tag color="green">
                 <CheckCircleOutlined /> 已连接
               </a-tag>
-            </div>
-
-            <div class="header-center">
-              <!-- 全局搜索 -->
-              <SearchBar />
-            </div>
-
-            <div class="header-right">
+            </template>
+            <template #center>
+              <div class="header-center">
+                <SearchBar />
+              </div>
+            </template>
+            <template #right>
               <a-space :size="8">
-                <!-- 通知中心 -->
                 <NotificationCenter />
-
-                <!-- 文件管理 -->
                 <a-tooltip title="文件管理">
-                  <a-button 
-                    type="text" 
-                    :icon="h(FileOutlined)" 
-                    @click="fileManagerVisible = true"
-                  />
+                  <a-button type="text" :icon="h(FileOutlined)" @click="fileManagerVisible = true" />
                 </a-tooltip>
-
-                <!-- 成员列表 -->
                 <a-tooltip title="成员列表">
-                  <a-button
-                    type="text"
-                    :icon="h(TeamOutlined)"
-                    @click="memberDrawerVisible = true"
-                  />
+                  <a-button type="text" :icon="h(TeamOutlined)" @click="memberDrawerVisible = true" />
                 </a-tooltip>
-
-                <!-- 用户头像 -->
                 <a-dropdown>
-                  <a-avatar 
-                    style="cursor: pointer; background-color: #1890ff"
-                    @click="userProfileVisible = true"
-                  >
+                  <a-avatar style="cursor: pointer; background-color: #1890ff" @click="userProfileVisible = true">
                     {{ currentUser.name[0].toUpperCase() }}
                   </a-avatar>
                   <template #overlay>
@@ -137,8 +118,8 @@
                   </template>
                 </a-dropdown>
               </a-space>
-            </div>
-          </div>
+            </template>
+          </Toolbar>
         </a-layout-header>
 
         <!-- 主内容区 -->
@@ -229,6 +210,7 @@ import NotificationCenter from '@/components/NotificationCenter.vue'
 import FileManager from '@/components/FileManager.vue'
 import UserProfile from '@/components/UserProfile.vue'
 import Settings from '@/components/Settings.vue'
+import Toolbar from '@/components/Common/Toolbar.vue'
 
 const router = useRouter()
 const collapsed = ref(false)

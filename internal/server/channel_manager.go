@@ -160,33 +160,28 @@ func (cm *ChannelManager) loadMembers() error {
 
 // loadMuteRecords 加载禁言记录
 func (cm *ChannelManager) loadMuteRecords() error {
-	// TODO: 添加GetMuteRecords方法到MemberRepository
-	// 暂时不加载禁言记录，等待实现
-	cm.server.logger.Debug("[ChannelManager] Mute records loading not implemented yet")
+	records, err := cm.server.memberRepo.GetMuteRecords(cm.server.config.ChannelID)
+	if err != nil {
+		cm.server.logger.Warn("[ChannelManager] Failed to load mute records: %v", err)
+		return err
+	}
 
-	/*
-		// 示例代码（待实现）：
-		records, err := cm.server.memberRepo.GetMuteRecords(cm.server.config.ChannelID)
-		if err != nil {
-			return err
+	if len(records) == 0 {
+		cm.server.logger.Debug("[ChannelManager] No active mute records")
+		return nil
+	}
+
+	now := time.Now()
+	cm.muteMutex.Lock()
+	for _, record := range records {
+		// 只加载未过期的禁言记录
+		if record.ExpiresAt.IsZero() || record.ExpiresAt.After(now) {
+			cm.muteRecords[record.MemberID] = record
 		}
+	}
+	cm.muteMutex.Unlock()
 
-		if len(records) > 0 {
-			cm.muteMutex.Lock()
-			defer cm.muteMutex.Unlock()
-
-		now := time.Now()
-		for _, record := range records {
-			// 只加载未过期的禁言记录
-			if !record.ExpiresAt.IsZero() && record.ExpiresAt.After(now) {
-				cm.muteRecords[record.MemberID] = record
-			}
-		}
-
-			cm.server.logger.Info("[ChannelManager] Loaded %d active mute records", len(cm.muteRecords))
-		}
-	*/
-
+	cm.server.logger.Info("[ChannelManager] Loaded %d active mute records", len(cm.muteRecords))
 	return nil
 }
 

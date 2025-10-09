@@ -131,7 +131,7 @@ export function TestConnection(arg1:string,arg2:models.TransportMode,arg3:number
 
 export function UnbanMember(arg1:string):Promise<app.Response>;
 
-export function UnlockHint(arg1:string,arg2:string):Promise<app.Response>;
+export function UnlockHint(arg1:string,arg2:number):Promise<app.Response>;
 
 export function UnmuteMember(arg1:string):Promise<app.Response>;
 

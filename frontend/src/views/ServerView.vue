@@ -327,7 +327,7 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: center;
   background-color: #f5f5f5;
-  padding: 40px 20px;
+  padding: var(--spacing-xl) var(--spacing-lg);
   overflow-y: auto;
 }
 
@@ -337,7 +337,7 @@ onMounted(() => {
 }
 
 .config-card {
-  margin-bottom: 20px;
+  margin-bottom: var(--spacing-lg);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
@@ -346,7 +346,7 @@ onMounted(() => {
 }
 
 .tip-text {
-  margin-left: 8px;
+  margin-left: var(--spacing-sm);
 }
 </style>
 

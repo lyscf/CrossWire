@@ -157,3 +157,16 @@ func (r *FileRepository) GetUploadProgress(fileID string) (uploaded, total int, 
 // - GetFilesByType() 按MIME类型获取文件
 // - GetTotalSize() 获取频道文件总大小
 // - GetFileStats() 获取文件统计信息
+
+// GetPendingUploads 查询未完成的上传任务
+func (r *FileRepository) GetPendingUploads(channelID string) ([]*models.File, error) {
+	var files []*models.File
+	err := r.db.GetChannelDB().Where("channel_id = ? AND (upload_status = ? OR upload_status = ?)",
+		channelID, models.UploadStatusPaused, models.UploadStatusUploading).
+		Order("uploaded_at DESC").
+		Find(&files).Error
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}

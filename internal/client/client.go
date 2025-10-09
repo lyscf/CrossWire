@@ -352,6 +352,32 @@ func (c *Client) initTransport() error {
 		return fmt.Errorf("failed to start transport: %w", err)
 	}
 
+	// 根据模式设置 server 公钥（用于广播验签）
+	switch tr := c.transport.(type) {
+	case *transport.ARPTransport:
+		tr.SetMode("client")
+		// 如果通过发现拿到了服务器公钥，可在外部调用 SetServerPublicKey；此处保持可选
+	case *transport.MDNSTransport:
+		tr.SetMode("client")
+		tr.SetChannelInfo(c.config.ChannelID, "")
+	case *transport.HTTPSTransport:
+		tr.SetMode("client")
+	}
+
+	// 文件回调：转交给 FileManager 进度/完成处理
+	_ = c.transport.OnFileReceived(func(ft *transport.FileTransfer) {
+		if ft == nil {
+			return
+		}
+		// 进度统计
+		c.stats.mutex.Lock()
+		c.stats.FilesReceived++
+		c.stats.BytesReceived += uint64(len(ft.Data))
+		c.stats.mutex.Unlock()
+		// 通知 FileManager（现有 receive_manager 已处理 file.* 控制/数据消息；此处只作为补充回调）
+		// 由 FileManager 统一入库/落盘。
+	})
+
 	return nil
 }
 

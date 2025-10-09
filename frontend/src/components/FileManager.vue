@@ -247,7 +247,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, h } from 'vue'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import { message, Modal, Empty } from 'ant-design-vue'
 import SearchInput from '@/components/Common/SearchInput.vue'
@@ -508,8 +508,10 @@ const previewFile = async (file) => {
       Modal.info({
         title: `预览: ${file.name}`,
         width: 800,
-        content: (
-          <pre style="max-height: 60vh; overflow:auto; white-space: pre-wrap;">{res.text}</pre>
+        content: h(
+          'pre',
+          { style: { maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap' } },
+          res.text
         )
       })
     } else if (res.mode === 'dataurl') {
@@ -518,9 +520,11 @@ const previewFile = async (file) => {
         Modal.info({
           title: `预览: ${file.name}`,
           width: 900,
-          content: (
-            <img src={res.dataUrl} alt={file.name} style="max-width:100%;max-height:70vh;object-fit:contain;" />
-          )
+          content: h('img', {
+            src: res.dataUrl,
+            alt: file.name,
+            style: { maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }
+          })
         })
       } else {
         window.open(res.dataUrl, '_blank')

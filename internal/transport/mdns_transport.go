@@ -2,7 +2,10 @@ package transport
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -340,9 +343,10 @@ func (t *MDNSTransport) signAndBroadcastViaMDNS(msg *Message) error {
 	}
 
 	// 使用Ed25519签名
-	// TODO: 集成crypto.Manager
-	// signature := ed25519.Sign(t.serverPrivKey, msg.Payload)
-	signature := []byte("TODO_SIGNATURE")
+	if len(t.serverPrivKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("server private key not set or invalid length")
+	}
+	signature := ed25519.Sign(ed25519.PrivateKey(t.serverPrivKey), msg.Payload)
 
 	// 构造签名载荷
 	signedPayload := &SignedPayload{
@@ -365,6 +369,10 @@ func (t *MDNSTransport) signAndBroadcastViaMDNS(msg *Message) error {
 
 	// 为每个块注册mDNS服务
 	msgIDShort := msg.ID
+	if msgIDShort == "" {
+		sum := sha256.Sum256(append(msg.Payload, byte(time.Now().UnixNano())))
+		msgIDShort = hex.EncodeToString(sum[:])
+	}
 	if len(msgIDShort) > 6 {
 		msgIDShort = msgIDShort[:6]
 	}
@@ -499,12 +507,13 @@ func (t *MDNSTransport) verifyAndProcess(encodedPayload string) {
 		return
 	}
 
-	// 验证服务器签名
-	// TODO: 集成crypto.Manager
-	// if !ed25519.Verify(t.serverPubKey, signedPayload.Message, signedPayload.Signature) {
-	//     fmt.Println("Invalid signature, possible attack!")
-	//     return
-	// }
+	// 验证服务器签名（如果已设置服务器公钥）
+	if len(t.serverPubKey) == ed25519.PublicKeySize {
+		if !ed25519.Verify(ed25519.PublicKey(t.serverPubKey), signedPayload.Message, signedPayload.Signature) {
+			fmt.Println("Invalid signature, possible attack!")
+			return
+		}
+	}
 
 	// 验证时间戳（防重放）
 	if !t.validateTimestamp(signedPayload.Timestamp) {
@@ -523,6 +532,16 @@ func (t *MDNSTransport) verifyAndProcess(encodedPayload string) {
 	msg := &Message{
 		Payload:   signedPayload.Message,
 		Timestamp: time.Unix(0, signedPayload.Timestamp),
+	}
+
+	// 文件回调（如果负载是传输文件）。同时触发重组缓存，当收齐时由上层再次回调完整文件。
+	if t.fileHandler != nil {
+		if ft := tryParseTransportFilePayload(signedPayload.Message); ft != nil {
+			go func() {
+				t.fileHandler(ft)
+				handleFileChunk(ft)
+			}()
+		}
 	}
 
 	// 调用处理函数
@@ -702,8 +721,16 @@ func (a *MessageAssembler) Cleanup() {
 
 // SendFile 发送文件
 func (t *MDNSTransport) SendFile(file *FileTransfer) error {
-	// TODO: 实现文件传输
-	return fmt.Errorf("not implemented")
+	if file == nil {
+		return fmt.Errorf("file is nil")
+	}
+	// 复用消息通道：封装为文件型负载并调用 SendMessage
+	payload, err := buildTransportFilePayload(file)
+	if err != nil {
+		return err
+	}
+	msg := &Message{Type: MessageTypeData, Payload: payload}
+	return t.SendMessage(msg)
 }
 
 // OnFileReceived 文件接收回调

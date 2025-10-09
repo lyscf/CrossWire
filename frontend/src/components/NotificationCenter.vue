@@ -373,7 +373,7 @@ const removeNotification = (id) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px;
+  padding: var(--spacing-md);
   border-bottom: 1px solid #f0f0f0;
 }
 
@@ -390,8 +390,8 @@ const removeNotification = (id) => {
 
 .notification-item {
   display: flex;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
   cursor: pointer;
   transition: background-color 0.2s;
   position: relative;
@@ -412,7 +412,7 @@ const removeNotification = (id) => {
 .notification-icon {
   flex-shrink: 0;
   font-size: 20px;
-  margin-top: 4px;
+  margin-top: var(--spacing-xs);
 }
 
 .notification-content {
@@ -424,13 +424,13 @@ const removeNotification = (id) => {
   font-size: 14px;
   font-weight: 500;
   color: rgba(0, 0, 0, 0.85);
-  margin-bottom: 4px;
+  margin-bottom: var(--spacing-xs);
 }
 
 .notification-desc {
   font-size: 13px;
   color: rgba(0, 0, 0, 0.65);
-  margin-bottom: 4px;
+  margin-bottom: var(--spacing-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

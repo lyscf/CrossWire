@@ -104,11 +104,15 @@ func (t *HTTPSTransport) startServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", t.handleWebSocket)
 
+	// 自签名证书场景：启动 TLS 服务器，但允许客户端跳过校验（客户端侧已禁用验证）
 	t.server = &http.Server{
 		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  t.config.ReadTimeout,
 		WriteTimeout: t.config.WriteTimeout,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
 	}
 
 	// 启动服务器
@@ -178,20 +182,19 @@ func (t *HTTPSTransport) Connect(target string) error {
 
 	t.mode = "client"
 
-	// 构造WebSocket URL
-	var wsURL string
-	if t.config.TLSCert != "" {
+	// 构造WebSocket URL：
+	// - 若调用方已提供完整的 ws:// 或 wss:// URL，直接使用
+	// - 否则默认使用 wss:// 并追加 /ws（HTTPS模式默认启用TLS）
+	wsURL := target
+	if !(len(wsURL) >= 5 && (wsURL[:5] == "ws://" || (len(wsURL) >= 6 && wsURL[:6] == "wss://"))) {
 		wsURL = fmt.Sprintf("wss://%s/ws", target)
-	} else {
-		wsURL = fmt.Sprintf("ws://%s/ws", target)
 	}
 
 	// 配置TLS
 	dialer := websocket.DefaultDialer
-	if t.config.TLSCert != "" {
-		dialer.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, // TODO: 配置证书验证
-		}
+	// HTTPS模式下使用自签名证书：禁用证书校验（按需可在将来改为固定指纹校验）
+	if len(wsURL) >= 6 && wsURL[:6] == "wss://" {
+		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
 	// 连接

@@ -360,6 +360,34 @@ func (r *ChallengeRepository) GetAllMembersContributionStats() (map[string]int, 
 	return statsMap, nil
 }
 
-// TODO: 实现以下方法
-// - SearchChallenges() 搜索题目
-// - GetChallengeLeaderboard() 获取解题排行榜（如需要）
+// SearchChallenges 按关键字搜索题目（标题/描述/标签）
+func (r *ChallengeRepository) SearchChallenges(channelID string, keyword string, limit, offset int) ([]*models.Challenge, error) {
+	var challenges []*models.Challenge
+	if keyword == "" {
+		// 回退为按频道获取
+		err := r.db.GetChannelDB().Where("channel_id = ?", channelID).
+			Order("created_at DESC").
+			Limit(limit).
+			Offset(offset).
+			Find(&challenges).Error
+		if err != nil {
+			return nil, err
+		}
+		return challenges, nil
+	}
+
+	like := "%" + keyword + "%"
+	err := r.db.GetChannelDB().Where(
+		"channel_id = ? AND (title LIKE ? OR description LIKE ? OR tags LIKE ?)",
+		channelID, like, like, like,
+	).Order("created_at DESC").Limit(limit).Offset(offset).Find(&challenges).Error
+	if err != nil {
+		return nil, err
+	}
+	return challenges, nil
+}
+
+// GetChallengeLeaderboard 获取解题排行榜（占位，按需实现）
+// func (r *ChallengeRepository) GetChallengeLeaderboard(channelID string, limit, offset int) ([]*LeaderboardItem, error) {
+// 	return nil, fmt.Errorf("not implemented")
+// }

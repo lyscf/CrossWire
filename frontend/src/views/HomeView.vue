@@ -119,14 +119,14 @@ const navigateToClient = () => {
 .home-content {
   text-align: center;
   max-width: 1000px;
-  padding: 60px 40px;
+  padding: var(--spacing-xxl) var(--spacing-xl);
   background: white;
   border-radius: 2px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .header {
-  margin-bottom: 48px;
+  margin-bottom: var(--spacing-xxl);
 }
 
 .title {
@@ -140,13 +140,13 @@ const navigateToClient = () => {
 .subtitle {
   font-size: 16px;
   color: rgba(0, 0, 0, 0.65);
-  margin-bottom: 24px;
+  margin-bottom: var(--spacing-lg);
 }
 
 .mode-selection {
   display: flex;
-  gap: 24px;
-  margin-bottom: 48px;
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-xxl);
   justify-content: center;
 }
 
@@ -167,8 +167,8 @@ const navigateToClient = () => {
 .card-content {
   display: flex;
   align-items: flex-start;
-  gap: 20px;
-  padding: 8px;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-sm);
 }
 
 .card-icon {
@@ -193,19 +193,19 @@ const navigateToClient = () => {
   font-size: 18px;
   font-weight: 600;
   color: rgba(0, 0, 0, 0.85);
-  margin-bottom: 8px;
+  margin-bottom: var(--spacing-sm);
 }
 
 .card-description {
   font-size: 14px;
   color: rgba(0, 0, 0, 0.65);
   line-height: 1.6;
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-md);
 }
 
 .features {
-  margin-bottom: 32px;
-  padding: 24px;
+  margin-bottom: var(--spacing-xl);
+  padding: var(--spacing-lg);
   background-color: #fafafa;
   border-radius: 4px;
 }
@@ -214,8 +214,8 @@ const navigateToClient = () => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 16px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
   background: white;
   border-radius: 4px;
   transition: all 0.3s;
@@ -237,7 +237,7 @@ const navigateToClient = () => {
 }
 
 .footer {
-  padding-top: 24px;
+  padding-top: var(--spacing-lg);
   border-top: 1px solid #f0f0f0;
   color: rgba(0, 0, 0, 0.45);
   font-size: 13px;

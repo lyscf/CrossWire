@@ -283,13 +283,13 @@ const handleFileUpload = async () => {
 }
 
 .input-toolbar {
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-sm);
 }
 
 .input-area {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--spacing-sm);
 }
 
 .message-textarea {

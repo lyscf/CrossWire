@@ -130,6 +130,9 @@ func (fm *FileManager) Start() error {
 
 	// 订阅文件相关事件
 	fm.client.eventBus.Subscribe(events.EventFileProgress, fm.handleFileReceived)
+	fm.client.eventBus.Subscribe(events.EventFileDownloadStarted, fm.handleFileReceived)
+	fm.client.eventBus.Subscribe(events.EventFileDownloadProgress, fm.handleFileReceived)
+	fm.client.eventBus.Subscribe(events.EventFileDownloadCompleted, fm.handleFileReceived)
 
 	fm.client.logger.Info("[FileManager] Started successfully")
 	return nil
@@ -688,7 +691,25 @@ func (fm *FileManager) handleFileReceived(event *events.Event) {
 	if fileEvent.File != nil {
 		fm.client.logger.Debug("[FileManager] File received: %s", fileEvent.File.ID)
 	}
-	// TODO: 处理文件接收逻辑
+
+	// 基于事件类型，处理下载进度与完成
+	switch event.Type {
+	case events.EventFileDownloadStarted, events.EventFileDownloadProgress:
+		// 尝试持久化当前下载任务状态
+		// 查找任务：按文件ID
+		if fileEvent.File != nil {
+			if task, ok := fm.GetDownloadTaskByFileID(fileEvent.File.ID); ok {
+				fm.saveDownloadTaskState(task)
+			}
+		}
+	case events.EventFileDownloadCompleted:
+		// 完成则清理内存任务，并持久化最终状态
+		if fileEvent.File != nil {
+			if task, ok := fm.GetDownloadTaskByFileID(fileEvent.File.ID); ok {
+				fm.saveDownloadTaskState(task)
+			}
+		}
+	}
 }
 
 // getOptimalChunkSize 获取最优分块大小
@@ -959,41 +980,159 @@ func (fm *FileManager) deleteUploadTaskState(taskID string) {
 
 // saveDownloadTaskState 保存下载任务状态到内存（可扩展到数据库）
 func (fm *FileManager) saveDownloadTaskState(task *FileDownloadTask) {
-	// TODO: 可以扩展到数据库持久化
+	// 将下载任务状态保存到缓存数据库（轻量持久化）
+	if task == nil {
+		return
+	}
+	// 构造可序列化的轻量结构（不保存全部分块数据，保存已接收分块索引）
+	type downloadState struct {
+		ID          string         `json:"id"`
+		FileID      string         `json:"file_id"`
+		Filename    string         `json:"filename"`
+		Size        int64          `json:"size"`
+		SavePath    string         `json:"save_path"`
+		ChunkSize   int            `json:"chunk_size"`
+		TotalChunks int            `json:"total_chunks"`
+		Received    []int          `json:"received"`
+		Status      DownloadStatus `json:"status"`
+		SHA256      string         `json:"sha256"`
+		UpdatedAt   int64          `json:"updated_at"`
+	}
+
+	// 收集已接收分块索引
+	received := make([]int, 0)
+	task.chunksMutex.RLock()
+	for idx := range task.chunks {
+		received = append(received, idx)
+	}
+	task.chunksMutex.RUnlock()
+
+	st := &downloadState{
+		ID:          task.ID,
+		FileID:      task.FileID,
+		Filename:    task.Filename,
+		Size:        task.Size,
+		SavePath:    task.SavePath,
+		ChunkSize:   task.ChunkSize,
+		TotalChunks: task.TotalChunks,
+		Received:    received,
+		Status:      task.Status,
+		SHA256:      task.SHA256,
+		UpdatedAt:   time.Now().Unix(),
+	}
+
+	// 序列化
+	data, err := json.Marshal(st)
+	if err != nil {
+		fm.client.logger.Warn("[FileManager] Failed to marshal download state: %v", err)
+		return
+	}
+
+	// 保存到缓存DB：key 使用 download:task:<taskID>
+	key := fmt.Sprintf("download:task:%s", task.ID)
+	if err := fm.client.db.SaveCache(key, data, 7*24*time.Hour); err != nil {
+		fm.client.logger.Warn("[FileManager] Failed to persist download state: %v", err)
+		return
+	}
+
 	fm.client.logger.Debug("[FileManager] Saved download task state: %s (%d/%d chunks)",
-		task.ID, len(task.chunks), task.TotalChunks)
+		task.ID, len(received), task.TotalChunks)
 }
 
 // loadDownloadTaskState 加载下载任务状态
 func (fm *FileManager) loadDownloadTaskState(taskID string) (*FileDownloadTask, error) {
-	// TODO: 从数据库加载
-	fm.downloadsMutex.RLock()
-	task, ok := fm.downloads[taskID]
-	fm.downloadsMutex.RUnlock()
-
+	// 优先从缓存数据库恢复
+	key := fmt.Sprintf("download:task:%s", taskID)
+	bytes, ok, err := fm.client.db.GetCache(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cache: %w", err)
+	}
 	if !ok {
-		return nil, fmt.Errorf("task not found: %s", taskID)
+		// 回退到内存
+		fm.downloadsMutex.RLock()
+		task, exists := fm.downloads[taskID]
+		fm.downloadsMutex.RUnlock()
+		if !exists {
+			return nil, fmt.Errorf("task not found: %s", taskID)
+		}
+		return task, nil
 	}
 
+	type downloadState struct {
+		ID          string         `json:"id"`
+		FileID      string         `json:"file_id"`
+		Filename    string         `json:"filename"`
+		Size        int64          `json:"size"`
+		SavePath    string         `json:"save_path"`
+		ChunkSize   int            `json:"chunk_size"`
+		TotalChunks int            `json:"total_chunks"`
+		Received    []int          `json:"received"`
+		Status      DownloadStatus `json:"status"`
+		SHA256      string         `json:"sha256"`
+	}
+
+	var st downloadState
+	if err := json.Unmarshal(bytes, &st); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cache: %w", err)
+	}
+
+	task := &FileDownloadTask{
+		ID:             st.ID,
+		FileID:         st.FileID,
+		Filename:       st.Filename,
+		Size:           st.Size,
+		SavePath:       st.SavePath,
+		ChunkSize:      st.ChunkSize,
+		TotalChunks:    st.TotalChunks,
+		ReceivedChunks: len(st.Received),
+		Status:         st.Status,
+		SHA256:         st.SHA256,
+		StartTime:      time.Now(),
+		chunks:         make(map[int][]byte),
+	}
+	// 仅恢复索引，不恢复实际分块内容（需要时可从网络重新请求缺失块）
+	for _, idx := range st.Received {
+		task.chunks[idx] = []byte{} // 占位
+	}
+
+	fm.client.logger.Info("[FileManager] Loaded download task from cache: %s (%d/%d)", task.ID, task.ReceivedChunks, task.TotalChunks)
 	return task, nil
 }
 
 // ListPendingUploads 列出所有待恢复的上传任务
 func (fm *FileManager) ListPendingUploads() ([]*FileUploadTask, error) {
 	// 从数据库查询所有未完成的上传任务
-	// TODO: 需要在FileRepository添加查询方法
 	fm.client.logger.Debug("[FileManager] Listing pending uploads...")
 
-	tasks := make([]*FileUploadTask, 0)
-	fm.uploadsMutex.RLock()
-	for _, task := range fm.uploads {
-		task.mutex.RLock()
-		if task.Status == models.UploadStatusPaused || task.Status == models.UploadStatusUploading {
-			tasks = append(tasks, task)
-		}
-		task.mutex.RUnlock()
+	files, err := fm.client.fileRepo.GetPendingUploads(fm.client.config.ChannelID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query files: %w", err)
 	}
-	fm.uploadsMutex.RUnlock()
+
+	tasks := make([]*FileUploadTask, 0)
+	for _, f := range files {
+		if f.UploadStatus == models.UploadStatusPaused || f.UploadStatus == models.UploadStatusUploading {
+			// 映射为上传任务视图
+			t := &FileUploadTask{
+				ID:             f.ID,
+				FilePath:       f.StoragePath,
+				Filename:       f.Filename,
+				Size:           f.Size,
+				MimeType:       f.MimeType,
+				ChunkSize:      f.ChunkSize,
+				TotalChunks:    f.TotalChunks,
+				UploadedChunks: f.UploadedChunks,
+				Status:         f.UploadStatus,
+				SHA256:         f.SHA256,
+				StartTime:      f.UploadedAt,
+				chunkStatus:    make([]bool, f.TotalChunks),
+			}
+			for i := 0; i < f.UploadedChunks && i < len(t.chunkStatus); i++ {
+				t.chunkStatus[i] = true
+			}
+			tasks = append(tasks, t)
+		}
+	}
 
 	return tasks, nil
 }

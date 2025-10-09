@@ -75,8 +75,41 @@ func (cm *ChallengeManager) Stop() error {
 
 // loadChallenges 从数据库加载挑战
 func (cm *ChallengeManager) loadChallenges() error {
-	// TODO: 从数据库加载
 	cm.client.logger.Debug("[ChallengeManager] Loading challenges from database...")
+
+	if cm.client == nil || cm.client.challengeRepo == nil {
+		return fmt.Errorf("challenge repository not initialized")
+	}
+
+	// 读取当前频道的挑战列表
+	channelID := cm.client.GetChannelID()
+	challenges, err := cm.client.challengeRepo.GetByChannelID(channelID)
+	if err != nil {
+		return fmt.Errorf("failed to load challenges: %w", err)
+	}
+
+	// 写入内存缓存
+	cm.challengesMutex.Lock()
+	for _, ch := range challenges {
+		if ch != nil {
+			cm.challenges[ch.ID] = ch
+		}
+	}
+	cm.challengesMutex.Unlock()
+
+	// 计算统计
+	cm.statsMutex.Lock()
+	cm.stats.TotalChallenges = len(challenges)
+	solved := 0
+	for _, ch := range challenges {
+		if ch != nil && len(ch.SolvedBy) > 0 {
+			solved++
+		}
+	}
+	cm.stats.SolvedChallenges = solved
+	cm.statsMutex.Unlock()
+
+	cm.client.logger.Info("[ChallengeManager] Loaded %d challenges from database", len(challenges))
 	return nil
 }
 

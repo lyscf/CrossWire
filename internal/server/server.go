@@ -376,8 +376,61 @@ func (s *Server) initTransport() error {
 		return fmt.Errorf("failed to create transport: %w", err)
 	}
 
+	// 设置模式与密钥
+	switch tr := t.(type) {
+	case *transport.ARPTransport:
+		tr.SetMode("server")
+		tr.SetServerKeys(s.config.PrivateKey, s.config.PublicKey)
+	case *transport.MDNSTransport:
+		tr.SetMode("server")
+		tr.SetServerKeys(s.config.PrivateKey, s.config.PublicKey)
+		tr.SetChannelInfo(s.config.ChannelID, s.config.ChannelName)
+	case *transport.HTTPSTransport:
+		tr.SetMode("server")
+	}
+
+	// 注册文件接收回调（将文件片段转换为服务器内部处理）
+	_ = t.OnFileReceived(func(ft *transport.FileTransfer) {
+		s.handleIncomingFile(ft)
+	})
+
 	s.transport = t
 	return nil
+}
+
+// handleIncomingFile 处理来自传输层的文件分片（统一走 MessageRouter 文件处理）
+func (s *Server) handleIncomingFile(ft *transport.FileTransfer) {
+	if ft == nil {
+		return
+	}
+	// 构造与 MessageRouter.HandleFileChunk 兼容的结构
+	chunk := struct {
+		FileID      string `json:"file_id"`
+		ChunkIndex  int    `json:"chunk_index"`
+		Data        []byte `json:"data"`
+		Checksum    string `json:"checksum"`
+		TotalChunks int    `json:"total_chunks"`
+	}{
+		FileID:      ft.FileID,
+		ChunkIndex:  ft.ChunkIndex,
+		Data:        ft.Data,
+		Checksum:    ft.ChunkChecksum,
+		TotalChunks: ft.TotalChunks,
+	}
+
+	// 序列化并加密
+	bytes, err := json.Marshal(&chunk)
+	if err != nil {
+		return
+	}
+	enc, err := s.crypto.EncryptMessage(bytes)
+	if err != nil {
+		return
+	}
+
+	// 投递到文件分块处理
+	msg := &transport.Message{Type: transport.MessageTypeControl, Payload: enc, Timestamp: time.Now()}
+	s.messageRouter.HandleFileChunk(msg)
 }
 
 // handleIncomingMessage 处理来自传输层的消息
@@ -445,6 +498,25 @@ func (s *Server) handleControlMessage(msg *transport.Message) {
 		s.messageRouter.HandleFileChunk(msg)
 	case "file.download":
 		s.messageRouter.HandleFileDownloadRequest(msg)
+	case "challenge.hint":
+		// 客户端请求解锁提示
+		var payload map[string]interface{}
+		if err := json.Unmarshal(decrypted, &payload); err != nil {
+			s.logger.Error("[Server] Failed to unmarshal challenge.hint: %v", err)
+			return
+		}
+		challengeID, _ := payload["challenge_id"].(string)
+		hintIndex := 0
+		if v, ok := payload["hint_index"].(float64); ok {
+			hintIndex = int(v)
+		}
+		if challengeID == "" {
+			s.logger.Warn("[Server] challenge.hint missing challenge_id")
+			return
+		}
+		if err := s.challengeManager.UnlockHint(challengeID, msg.SenderID, hintIndex); err != nil {
+			s.logger.Error("[Server] UnlockHint failed: %v", err)
+		}
 	case "ack":
 		s.handleMessageAck(msg)
 	default:

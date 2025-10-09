@@ -11,11 +11,7 @@
           <a-list-item class="member-item">
             <a-list-item-meta>
               <template #avatar>
-                <a-badge :status="getStatusBadge(item.status)" :offset="[-5, 35]">
-                  <a-avatar :style="{ backgroundColor: getAvatarColor(item.nickname) }">
-                    {{ item.nickname[0] }}
-                  </a-avatar>
-                </a-badge>
+                <AvatarChip :name="item.nickname" :status="item.status" :badge-offset="[-5, 35]" />
               </template>
 
               <template #title>
@@ -88,11 +84,7 @@
           <a-list-item class="member-item member-offline">
             <a-list-item-meta>
               <template #avatar>
-                <a-avatar
-                  :style="{ backgroundColor: '#d9d9d9', opacity: 0.6 }"
-                >
-                  {{ item.nickname[0] }}
-                </a-avatar>
+                <AvatarChip :name="item.nickname" />
               </template>
 
               <template #title>
@@ -108,6 +100,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import AvatarChip from '@/components/Common/AvatarChip.vue'
 import {
   CrownOutlined,
   CodeOutlined,
@@ -151,33 +144,20 @@ const getStatusText = (status) => {
   return textMap[status] || '未知'
 }
 
-const getAvatarColor = (name) => {
-  const colors = [
-    '#1890ff',
-    '#52c41a',
-    '#faad14',
-    '#f5222d',
-    '#722ed1',
-    '#13c2c2',
-    '#eb2f96'
-  ]
-  const index = name.charCodeAt(0) % colors.length
-  return colors[index]
-}
 </script>
 
 <style scoped>
 .member-list {
-  padding: 8px 0;
+  padding: var(--spacing-sm) 0;
 }
 
 .member-section {
-  margin-bottom: 16px;
+  margin-bottom: var(--spacing-md);
 }
 
 .section-header {
-  padding: 8px 0;
-  margin-bottom: 8px;
+  padding: var(--spacing-sm) 0;
+  margin-bottom: var(--spacing-sm);
 }
 
 .section-title {
@@ -188,7 +168,7 @@ const getAvatarColor = (name) => {
 }
 
 .member-item {
-  padding: 12px 8px;
+  padding: var(--spacing-sm) var(--spacing-sm);
   border-radius: 4px;
   transition: background-color 0.3s;
   cursor: pointer;
@@ -205,23 +185,23 @@ const getAvatarColor = (name) => {
 .member-name {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs);
   font-size: 14px;
   font-weight: 500;
 }
 
 .member-info {
-  margin-top: 4px;
+  margin-top: var(--spacing-xs);
 }
 
 .member-skills {
-  margin-bottom: 4px;
+  margin-bottom: var(--spacing-xs);
 }
 
 .member-task {
   font-size: 12px;
   color: rgba(0, 0, 0, 0.65);
-  margin-top: 4px;
+  margin-top: var(--spacing-xs);
 }
 
 .member-status-text {

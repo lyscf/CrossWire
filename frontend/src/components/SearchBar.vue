@@ -37,9 +37,7 @@
               >
                 <a-list-item-meta>
                   <template #avatar>
-                    <a-avatar :style="{ backgroundColor: getAvatarColor(item.sender) }">
-                      {{ item.sender[0] }}
-                    </a-avatar>
+                    <AvatarChip :name="item.sender" />
                   </template>
                   <template #title>
                     <span class="sender-name">{{ item.sender }}</span>
@@ -112,11 +110,7 @@
               >
                 <a-list-item-meta>
                   <template #avatar>
-                    <a-badge :status="item.online ? 'success' : 'default'">
-                      <a-avatar :style="{ backgroundColor: getAvatarColor(item.name) }">
-                        {{ item.name[0] }}
-                      </a-avatar>
-                    </a-badge>
+                    <AvatarChip :name="item.name" :status="item.online ? 'online' : 'offline'" />
                   </template>
                   <template #title>
                     <span v-html="highlightText(item.name)"></span>
@@ -157,6 +151,7 @@ import {
   UserOutlined
 } from '@ant-design/icons-vue'
 import SearchInput from '@/components/Common/SearchInput.vue'
+import AvatarChip from '@/components/Common/AvatarChip.vue'
 import { useMessageStore } from '@/stores/message'
 import { useChallengeStore } from '@/stores/challenge'
 import { useMemberStore } from '@/stores/member'
@@ -228,10 +223,6 @@ const formatTime = (timestamp) => {
   return dayjs(timestamp).format('MM-DD HH:mm')
 }
 
-const getAvatarColor = (name) => {
-  const colors = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1']
-  return colors[name.charCodeAt(0) % colors.length]
-}
 
 const getCategoryColor = (category) => {
   const colors = {
@@ -276,7 +267,7 @@ const closeSearch = () => {
   position: relative;
   width: 100%;
   max-width: 600px;
-  padding: 4px 0; /* 添加上下padding */
+  padding: var(--spacing-xs) 0; /* 添加上下padding */
 }
 
 .search-input {
@@ -301,7 +292,7 @@ const closeSearch = () => {
 
 .sender-name {
   font-weight: 500;
-  margin-right: 8px;
+  margin-right: var(--spacing-sm);
 }
 
 .message-time {

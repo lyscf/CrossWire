@@ -138,7 +138,7 @@ const renderMessageWithMentions = (content) => {
 .message-list {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 24px;
+  padding: var(--spacing-md) var(--spacing-lg);
 }
 
 .messages-container {
@@ -147,7 +147,7 @@ const renderMessageWithMentions = (content) => {
 }
 
 .message-wrapper {
-  margin-bottom: 20px;
+  margin-bottom: var(--spacing-md);
 }
 
 .system-message {
@@ -162,7 +162,7 @@ const renderMessageWithMentions = (content) => {
 .message-item {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--spacing-sm);
 }
 
 .message-item.message-mine {
@@ -188,8 +188,8 @@ const renderMessageWithMentions = (content) => {
 .message-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
 }
 
 .message-header-right {
@@ -209,7 +209,7 @@ const renderMessageWithMentions = (content) => {
 
 .message-bubble {
   display: inline-block;
-  padding: 10px 14px;
+  padding: var(--spacing-sm) var(--spacing-md);
   border-radius: 4px;
   background-color: #f5f5f5;
   word-wrap: break-word;
