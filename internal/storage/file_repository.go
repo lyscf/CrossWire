@@ -152,11 +152,72 @@ func (r *FileRepository) GetUploadProgress(fileID string) (uploaded, total int, 
 	return file.UploadedChunks, file.TotalChunks, nil
 }
 
-// TODO: 实现以下方法
-// - SearchFiles() 搜索文件（按名称/类型）
-// - GetFilesByType() 按MIME类型获取文件
-// - GetTotalSize() 获取频道文件总大小
-// - GetFileStats() 获取文件统计信息
+// SearchFiles 按名称/类型搜索文件
+func (r *FileRepository) SearchFiles(channelID string, keyword string, mimeLike string, limit, offset int) ([]*models.File, error) {
+	var files []*models.File
+	q := r.db.GetChannelDB().Where("channel_id = ?", channelID)
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		q = q.Where("name LIKE ?", like)
+	}
+	if mimeLike != "" {
+		like := mimeLike
+		if like[len(like)-1] != '%' {
+			like = like + "%"
+		}
+		q = q.Where("mime_type LIKE ?", like)
+	}
+	if limit > 0 {
+		q = q.Limit(limit).Offset(offset)
+	}
+	if err := q.Order("uploaded_at DESC").Find(&files).Error; err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// GetFilesByType 按MIME大类获取文件
+func (r *FileRepository) GetFilesByType(channelID string, mimePrefix string, limit, offset int) ([]*models.File, error) {
+	var files []*models.File
+	like := mimePrefix
+	if like == "" {
+		like = "%"
+	} else if like[len(like)-1] != '%' {
+		like = like + "%"
+	}
+	err := r.db.GetChannelDB().Where("channel_id = ? AND mime_type LIKE ?", channelID, like).
+		Order("uploaded_at DESC").
+		Limit(limit).Offset(offset).Find(&files).Error
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// GetTotalSize 获取频道文件总大小
+func (r *FileRepository) GetTotalSize(channelID string) (int64, error) {
+	var total int64
+	err := r.db.GetChannelDB().Model(&models.File{}).Where("channel_id = ?", channelID).
+		Select("COALESCE(SUM(size),0)").Scan(&total).Error
+	return total, err
+}
+
+// GetFileStats 获取文件统计信息
+func (r *FileRepository) GetFileStats(channelID string) (map[string]interface{}, error) {
+	var count int64
+	if err := r.db.GetChannelDB().Model(&models.File{}).Where("channel_id = ?", channelID).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	totalSize, err := r.GetTotalSize(channelID)
+	if err != nil {
+		return nil, err
+	}
+	stats := map[string]interface{}{
+		"count":      count,
+		"total_size": totalSize,
+	}
+	return stats, nil
+}
 
 // GetPendingUploads 查询未完成的上传任务
 func (r *FileRepository) GetPendingUploads(channelID string) ([]*models.File, error) {

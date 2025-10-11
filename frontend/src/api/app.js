@@ -77,6 +77,27 @@ export async function searchMessages(query, limit = 50, offset = 0) {
   return unwrap(res)
 }
 
+// 新增：按时间范围/标签/@我/统计
+export async function getMessagesByTimeRange(startSec = 0, endSec = 0, limit = 100, offset = 0) {
+  const res = await App.GetMessagesByTimeRange(startSec, endSec, limit, offset)
+  return unwrap(res)
+}
+
+export async function getMessagesByTag(tag, limit = 50, offset = 0) {
+  const res = await App.GetMessagesByTag(tag, limit, offset)
+  return unwrap(res)
+}
+
+export async function getMentionedMessages(limit = 50, offset = 0) {
+  const res = await App.GetMentionedMessages(limit, offset)
+  return unwrap(res)
+}
+
+export async function getMessageStats(fromSec = 0, toSec = 0) {
+  const res = await App.GetMessageStats(fromSec, toSec)
+  return unwrap(res)
+}
+
 export async function deleteMessage(messageId) {
   const res = await App.DeleteMessage(messageId)
   return unwrap(res)

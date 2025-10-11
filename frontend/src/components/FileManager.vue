@@ -247,8 +247,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, h } from 'vue'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import { message, Modal, Empty } from 'ant-design-vue'
 import SearchInput from '@/components/Common/SearchInput.vue'
 import {
@@ -342,31 +341,49 @@ const getFileTypeFromMime = (mimeType) => {
 onMounted(() => {
   loadFiles()
 
-  // 监听文件删除事件
-  EventsOn('file:deleted', (data) => {
-    if (!data) return
-    const fileId = data.file_id || data.id
-    const idx = files.value.findIndex(f => f.id === fileId)
-    if (idx !== -1) {
-      const removed = files.value.splice(idx, 1)
-      message.info(`文件已删除: ${data.filename || removed[0]?.name || fileId}`)
-    }
-  })
-
-  // 监听来自 NotificationCenter 的全局删除事件（用于其他来源触发）
-  window.addEventListener('cw:file:deleted', (e) => {
+  // 统一监听全局文件事件（由 App.vue 转发）
+  const handler = (e) => {
     const detail = e?.detail || {}
-    const fileId = detail.fileId
-    if (!fileId) return
-    const idx = files.value.findIndex(f => f.id === fileId)
-    if (idx !== -1) {
-      files.value.splice(idx, 1)
+    const type = detail.type || ''
+    const data = detail.data || {}
+    if (!type.startsWith('file:')) return
+
+    if (type === 'file:deleted') {
+      const fileId = data.file_id || data.id
+      const idx = files.value.findIndex(f => f.id === fileId)
+      if (idx !== -1) {
+        const removed = files.value.splice(idx, 1)
+        message.info(`文件已删除: ${data.filename || removed[0]?.name || fileId}`)
+      }
+      if (selectedFile.value?.id === fileId) {
+        selectedFile.value = null
+        showDetails.value = false
+      }
+      return
     }
-    if (selectedFile.value?.id === fileId) {
-      selectedFile.value = null
-      showDetails.value = false
+
+    if (type === 'file:upload:completed') {
+      // 重新加载文件列表
+      loadFiles()
+      return
     }
-  })
+
+    if (type === 'file:upload:progress') {
+      // 可选：显示上传进度（简单提示）
+      const pct = data?.progress ?? 0
+      message.destroy('fm-progress')
+      message.loading({ content: `上传中 ${pct}%`, key: 'fm-progress', duration: 0 })
+      if (pct >= 100) message.destroy('fm-progress')
+    }
+  }
+  window.addEventListener('cw:file:event', handler)
+  // 卸载清理
+  cleanup.value = () => window.removeEventListener('cw:file:event', handler)
+})
+
+const cleanup = ref(() => {})
+onUnmounted(() => {
+  try { cleanup.value && cleanup.value() } catch {}
 })
 
 const columns = [
@@ -553,9 +570,14 @@ const previewFile = async (file) => {
   }
 }
 
-const shareFile = (file) => {
-  message.success(`分享链接已复制到剪贴板`)
-  // TODO: 实现文件分享
+const shareFile = async (file) => {
+  try {
+    const pseudoLink = `cw://file/${file.id}`
+    await navigator.clipboard.writeText(pseudoLink)
+    message.success(`分享链接已复制: ${pseudoLink}`)
+  } catch (e) {
+    message.error('复制分享链接失败')
+  }
 }
 
 const deleteFile = (file) => {

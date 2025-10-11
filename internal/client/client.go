@@ -145,8 +145,13 @@ func NewClient(config *Config, db *storage.Database, eventBus *events.EventBus) 
 		return nil, fmt.Errorf("eventBus is nil")
 	}
 
-	// 创建日志器
-	logger, err := utils.NewLogger(utils.LogLevelDebug, config.DataDir)
+	// 创建日志器：使用 DataDir/logs 目录
+	logDir := config.DataDir
+	if logDir == "" {
+		logDir = "."
+	}
+	logDir = fmt.Sprintf("%s/%s", logDir, "logs")
+	logger, err := utils.NewLogger(utils.LogLevelDebug, logDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}

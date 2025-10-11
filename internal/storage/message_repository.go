@@ -230,9 +230,79 @@ func (r *MessageRepository) Search(channelID, keyword string, limit, offset int)
 	return messages, nil
 }
 
-// TODO: 实现以下方法
-// - GetMessagesByTimeRange() 按时间范围获取消息
-// - GetMessagesByTag() 按标签获取消息
-// - GetMentionedMessages() 获取@我的消息
-// - BatchCreate() 批量创建消息
-// - GetMessageStats() 获取消息统计信息
+// GetMessagesByTimeRange 按时间范围获取消息（含起止，按时间升序）
+func (r *MessageRepository) GetMessagesByTimeRange(channelID string, start, end time.Time, limit, offset int) ([]*models.Message, error) {
+	var messages []*models.Message
+	q := r.db.GetChannelDB().Where("channel_id = ? AND deleted = ?", channelID, false)
+	if !start.IsZero() {
+		q = q.Where("timestamp >= ?", start)
+	}
+	if !end.IsZero() {
+		q = q.Where("timestamp <= ?", end)
+	}
+	if limit > 0 {
+		q = q.Limit(limit).Offset(offset)
+	}
+	if err := q.Order("timestamp ASC").Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// GetMessagesByTag 按标签获取消息（LIKE 匹配）
+func (r *MessageRepository) GetMessagesByTag(channelID string, tag string, limit, offset int) ([]*models.Message, error) {
+	var messages []*models.Message
+	like := "%" + tag + "%"
+	err := r.db.GetChannelDB().Where("channel_id = ? AND deleted = 0 AND tags LIKE ?", channelID, like).
+		Order("timestamp DESC").Limit(limit).Offset(offset).Find(&messages).Error
+	if err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// GetMentionedMessages 获取@我的消息（mentions LIKE）
+func (r *MessageRepository) GetMentionedMessages(channelID string, myID string, limit, offset int) ([]*models.Message, error) {
+	var messages []*models.Message
+	like := "%" + myID + "%"
+	err := r.db.GetChannelDB().Where("channel_id = ? AND deleted = 0 AND mentions LIKE ?", channelID, like).
+		Order("timestamp DESC").Limit(limit).Offset(offset).Find(&messages).Error
+	if err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// BatchCreate 批量创建消息
+func (r *MessageRepository) BatchCreate(messages []*models.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	return r.db.GetChannelDB().Create(&messages).Error
+}
+
+// GetMessageStats 获取消息统计信息（按天聚合）
+func (r *MessageRepository) GetMessageStats(channelID string, from, to time.Time) (map[string]int64, error) {
+	type row struct {
+		Day string
+		Cnt int64
+	}
+	var rows []row
+	q := r.db.GetChannelDB().Table("messages").
+		Select("strftime('%Y-%m-%d', timestamp) AS day, COUNT(1) AS cnt").
+		Where("channel_id = ? AND deleted = 0", channelID)
+	if !from.IsZero() {
+		q = q.Where("timestamp >= ?", from)
+	}
+	if !to.IsZero() {
+		q = q.Where("timestamp <= ?", to)
+	}
+	if err := q.Group("day").Order("day ASC").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(rows))
+	for _, r0 := range rows {
+		out[r0.Day] = r0.Cnt
+	}
+	return out, nil
+}

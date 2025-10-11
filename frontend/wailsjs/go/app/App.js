@@ -126,8 +126,16 @@ export function GetMembers() {
   return window['go']['app']['App']['GetMembers']();
 }
 
+export function GetMentionedMessages(arg1, arg2) {
+  return window['go']['app']['App']['GetMentionedMessages'](arg1, arg2);
+}
+
 export function GetMessage(arg1) {
   return window['go']['app']['App']['GetMessage'](arg1);
+}
+
+export function GetMessageStats(arg1, arg2) {
+  return window['go']['app']['App']['GetMessageStats'](arg1, arg2);
 }
 
 export function GetMessages(arg1, arg2) {
@@ -136,6 +144,14 @@ export function GetMessages(arg1, arg2) {
 
 export function GetMessagesByChannel(arg1, arg2, arg3) {
   return window['go']['app']['App']['GetMessagesByChannel'](arg1, arg2, arg3);
+}
+
+export function GetMessagesByTag(arg1, arg2, arg3) {
+  return window['go']['app']['App']['GetMessagesByTag'](arg1, arg2, arg3);
+}
+
+export function GetMessagesByTimeRange(arg1, arg2, arg3, arg4) {
+  return window['go']['app']['App']['GetMessagesByTimeRange'](arg1, arg2, arg3, arg4);
 }
 
 export function GetMyInfo() {

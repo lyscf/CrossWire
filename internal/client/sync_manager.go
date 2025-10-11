@@ -1,6 +1,7 @@
 package client
 
 import (
+	"crosswire/internal/events"
 	"encoding/json"
 	"sync"
 	"time"
@@ -51,6 +52,9 @@ func (sm *SyncManager) Start() error {
 
 	// 启动定期同步
 	go sm.periodicSync()
+
+	// 启动后立即触发一次同步，避免等待周期
+	go sm.TriggerSync()
 
 	sm.client.logger.Info("[SyncManager] Sync manager started")
 
@@ -250,6 +254,12 @@ func (sm *SyncManager) processSyncMessages(messagesData []interface{}) {
 					sm.client.logger.Warn("[SyncManager] Failed to update message: %v", err)
 				} else {
 					syncedCount++
+					// 发布更新事件供前端刷新
+					sm.client.eventBus.Publish(events.EventMessageUpdated, &events.MessageEvent{
+						Message:   &msg,
+						ChannelID: msg.ChannelID,
+						SenderID:  msg.SenderID,
+					})
 				}
 			}
 		} else {
@@ -258,6 +268,12 @@ func (sm *SyncManager) processSyncMessages(messagesData []interface{}) {
 				sm.client.logger.Warn("[SyncManager] Failed to save message: %v", err)
 			} else {
 				syncedCount++
+				// 发布接收事件供前端刷新
+				sm.client.eventBus.Publish(events.EventMessageReceived, &events.MessageEvent{
+					Message:   &msg,
+					ChannelID: msg.ChannelID,
+					SenderID:  msg.SenderID,
+				})
 			}
 		}
 

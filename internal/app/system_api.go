@@ -2,12 +2,16 @@ package app
 
 import (
 	"archive/zip"
+	"bufio"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"time"
 
 	"crosswire/internal/models"
@@ -299,11 +303,25 @@ func (a *App) UpdateUserProfile(profile UserProfile) Response {
 
 // GetRecentChannels 获取最近的频道
 func (a *App) GetRecentChannels() Response {
-	// TODO: 从数据库加载最近频道列表
-	// 暂时返回空列表
-	recentChannels := make([]*RecentChannel, 0)
-
-	return NewSuccessResponse(recentChannels)
+	// 从 user.db 加载最近频道记录，按最近加入时间倒序
+	udb := a.db.GetUserDB()
+	if udb == nil {
+		return NewSuccessResponse([]*RecentChannel{})
+	}
+	var rows []models.RecentChannel
+	if err := udb.Order("last_joined DESC").Limit(20).Find(&rows).Error; err != nil {
+		return NewErrorResponse("db_error", "获取最近频道失败", err.Error())
+	}
+	out := make([]*RecentChannel, 0, len(rows))
+	for _, rc := range rows {
+		out = append(out, &RecentChannel{
+			ChannelID:   rc.ChannelID,
+			ChannelName: rc.ChannelName,
+			LastJoined:  rc.LastJoined.Unix(),
+			Mode:        a.mode,
+		})
+	}
+	return NewSuccessResponse(out)
 }
 
 // ==================== 数据导入导出 API ====================
@@ -389,8 +407,80 @@ func (a *App) ImportData(importPath string) Response {
 	}
 	defer zipReader.Close()
 
-	// TODO: 实现数据导入逻辑
-	// 需要谨慎处理，避免数据冲突
+	// 简化导入：识别若干固定文件并入库，忽略未知文件
+	// 注意：仅导入到当前打开的频道数据库
+	var channelID string
+	if a.mode == ModeServer && a.server != nil {
+		ch, _ := a.server.GetChannel()
+		channelID = ch.ID
+	} else if a.mode == ModeClient && a.client != nil {
+		channelID = a.client.GetChannelID()
+	}
+
+	if channelID == "" {
+		return NewErrorResponse("invalid_state", "未连接频道，无法导入", "")
+	}
+
+	type counters struct{ Messages, Files, Members, Challenges int }
+	count := counters{}
+
+	for _, f := range zipReader.File {
+		name := f.Name
+		r, err := f.Open()
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(r)
+		r.Close()
+		if err != nil {
+			continue
+		}
+
+		switch name {
+		case "messages.json":
+			var msgs []models.Message
+			if err := json.Unmarshal(data, &msgs); err == nil {
+				for i := range msgs {
+					m := &msgs[i]
+					m.ChannelID = channelID
+					_ = a.db.SaveMessage(m)
+					count.Messages++
+				}
+			}
+		case "files.json":
+			var files []models.File
+			if err := json.Unmarshal(data, &files); err == nil {
+				for i := range files {
+					f := &files[i]
+					f.ChannelID = channelID
+					_ = a.db.SaveFile(f)
+					count.Files++
+				}
+			}
+		case "members.json":
+			var members []models.Member
+			if err := json.Unmarshal(data, &members); err == nil {
+				for i := range members {
+					mb := &members[i]
+					mb.ChannelID = channelID
+					_ = a.db.AddMember(mb)
+					count.Members++
+				}
+			}
+		case "challenges.json":
+			var challenges []models.Challenge
+			if err := json.Unmarshal(data, &challenges); err == nil {
+				for i := range challenges {
+					ch := &challenges[i]
+					ch.ChannelID = channelID
+					_ = a.db.CreateChallenge(ch)
+					count.Challenges++
+				}
+			}
+		default:
+			// ignore others
+		}
+	}
 
 	a.logger.Info("Data import completed")
 
@@ -424,19 +514,65 @@ func (a *App) exportToZip(zipWriter *zip.Writer, filename string, data interface
 
 // GetLogs 获取日志
 func (a *App) GetLogs(limit int) Response {
-	// TODO: 从日志系统获取日志
-	logs := make([]map[string]interface{}, 0)
-
-	return NewSuccessResponse(logs)
+	if limit <= 0 {
+		limit = 200
+	}
+	logDir := "./logs"
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return NewSuccessResponse([]map[string]interface{}{})
+	}
+	files := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if filepath.Ext(e.Name()) == ".log" {
+			files = append(files, filepath.Join(logDir, e.Name()))
+		}
+	}
+	if len(files) == 0 {
+		return NewSuccessResponse([]map[string]interface{}{})
+	}
+	sort.Strings(files)
+	latest := files[len(files)-1]
+	f, err := os.Open(latest)
+	if err != nil {
+		return NewErrorResponse("file_error", "读取日志失败", err.Error())
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	lines := make([]string, 0, limit)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+		if len(lines) > limit {
+			lines = lines[1:]
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return NewErrorResponse("scan_error", "解析日志失败", err.Error())
+	}
+	out := make([]map[string]interface{}, 0, len(lines))
+	for _, ln := range lines {
+		out = append(out, map[string]interface{}{"line": ln})
+	}
+	return NewSuccessResponse(out)
 }
 
 // ClearLogs 清空日志
 func (a *App) ClearLogs() Response {
-	// TODO: 清空日志
-
-	return NewSuccessResponse(map[string]interface{}{
-		"message": "日志已清空",
-	})
+	logDir := "./logs"
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return NewErrorResponse("fs_error", "读取日志目录失败", err.Error())
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		_ = os.Remove(filepath.Join(logDir, e.Name()))
+	}
+	return NewSuccessResponse(map[string]interface{}{"message": "日志已清空"})
 }
 
 // ==================== 文件选择 API ====================

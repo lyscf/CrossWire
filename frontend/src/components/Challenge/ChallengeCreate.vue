@@ -75,6 +75,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { createChallenge } from '@/api/app'
 
 const props = defineProps({
   open: {
@@ -100,19 +101,19 @@ const formData = ref({
   attachmentUrl: ''
 })
 
-const handleCreate = () => {
-  // TODO: 调用 API 创建题目
-  const newChallenge = {
-    id: Date.now().toString(),
-    ...formData.value,
-    status: 'pending',
-    assignedTo: [],
-    progress: 0,
-    solvedBy: null,
-    createdAt: new Date().toISOString()
+const handleCreate = async () => {
+  // 连接后端创建题目
+  const payload = {
+    title: formData.value.title,
+    category: formData.value.category,
+    difficulty: formData.value.difficulty,
+    points: formData.value.points,
+    description: formData.value.description,
+    flag: formData.value.flag,
+    attachment_url: formData.value.attachmentUrl
   }
-  
-  emit('created', newChallenge)
+  await createChallenge(payload)
+  emit('created', payload)
   handleCancel()
 }
 

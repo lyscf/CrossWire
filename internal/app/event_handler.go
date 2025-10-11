@@ -28,6 +28,9 @@ func (a *App) subscribeEvents() {
 	// 订阅题目事件
 	a.subscribeChallengeEvents()
 
+	// 订阅频道事件
+	a.subscribeChannelEvents()
+
 	// 订阅系统事件
 	a.subscribeSystemEvents()
 
@@ -117,6 +120,26 @@ func (a *App) subscribeMemberEvents() {
 	a.eventBus.Subscribe(events.EventMemberBanned, func(ev *events.Event) {
 		a.emitEvent(EventMemberBanned, ev.Data)
 	})
+
+	// 成员禁言
+	a.eventBus.Subscribe(events.EventMemberMuted, func(ev *events.Event) {
+		a.emitEvent("member:muted", ev.Data)
+	})
+
+	// 成员解除禁言
+	a.eventBus.Subscribe(events.EventMemberUnmuted, func(ev *events.Event) {
+		a.emitEvent("member:unmuted", ev.Data)
+	})
+
+	// 成员解除封禁
+	a.eventBus.Subscribe(events.EventMemberUnbanned, func(ev *events.Event) {
+		a.emitEvent("member:unbanned", ev.Data)
+	})
+
+	// 成员角色变更
+	a.eventBus.Subscribe(events.EventMemberRoleChanged, func(ev *events.Event) {
+		a.emitEvent("member:role_changed", ev.Data)
+	})
 }
 
 // ==================== 文件事件 ====================
@@ -195,6 +218,11 @@ func (a *App) subscribeChallengeEvents() {
 	a.eventBus.Subscribe(events.EventChallengeProgress, func(ev *events.Event) {
 		a.emitEvent(EventChallengeProgress, ev.Data)
 	})
+
+	// 题目提交
+	a.eventBus.Subscribe(events.EventChallengeSubmitted, func(ev *events.Event) {
+		a.emitEvent("challenge:submitted", ev.Data)
+	})
 }
 
 // ==================== 系统事件 ====================
@@ -220,11 +248,50 @@ func (a *App) subscribeSystemEvents() {
 		a.emitEvent(EventError, ev.Data)
 	})
 
+	// 成员状态变化
+	a.eventBus.Subscribe(events.EventStatusChanged, func(ev *events.Event) {
+		a.emitEvent("status:changed", ev.Data)
+	})
+
+	// Typing 开始
+	a.eventBus.Subscribe(events.EventTypingStart, func(ev *events.Event) {
+		a.emitEvent("typing:start", ev.Data)
+	})
+
+	// Typing 结束
+	a.eventBus.Subscribe(events.EventTypingStop, func(ev *events.Event) {
+		a.emitEvent("typing:stop", ev.Data)
+	})
+
 	// 警告/信息事件：沿用更新事件作为占位
 	a.eventBus.Subscribe(events.EventMessageUpdated, func(ev *events.Event) {
 		a.emitEvent(EventWarning, ev.Data)
 	})
 	a.eventBus.Subscribe(events.EventMessageUpdated, func(ev *events.Event) {
 		a.emitEvent(EventInfo, ev.Data)
+	})
+}
+
+// ==================== 频道事件 ====================
+
+func (a *App) subscribeChannelEvents() {
+	// 频道创建
+	a.eventBus.Subscribe(events.EventChannelCreated, func(ev *events.Event) {
+		a.emitEvent("channel:created", ev.Data)
+	})
+
+	// 加入频道
+	a.eventBus.Subscribe(events.EventChannelJoined, func(ev *events.Event) {
+		a.emitEvent("channel:joined", ev.Data)
+	})
+
+	// 离开频道
+	a.eventBus.Subscribe(events.EventChannelLeft, func(ev *events.Event) {
+		a.emitEvent("channel:left", ev.Data)
+	})
+
+	// 频道更新
+	a.eventBus.Subscribe(events.EventChannelUpdated, func(ev *events.Event) {
+		a.emitEvent("channel:updated", ev.Data)
 	})
 }

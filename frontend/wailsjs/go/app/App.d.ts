@@ -65,11 +65,19 @@ export function GetMember(arg1:string):Promise<app.Response>;
 
 export function GetMembers():Promise<app.Response>;
 
+export function GetMentionedMessages(arg1:number,arg2:number):Promise<app.Response>;
+
 export function GetMessage(arg1:string):Promise<app.Response>;
+
+export function GetMessageStats(arg1:number,arg2:number):Promise<app.Response>;
 
 export function GetMessages(arg1:number,arg2:number):Promise<app.Response>;
 
 export function GetMessagesByChannel(arg1:string,arg2:number,arg3:number):Promise<app.Response>;
+
+export function GetMessagesByTag(arg1:string,arg2:number,arg3:number):Promise<app.Response>;
+
+export function GetMessagesByTimeRange(arg1:number,arg2:number,arg3:number,arg4:number):Promise<app.Response>;
 
 export function GetMyInfo():Promise<app.Response>;
 

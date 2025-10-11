@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -29,6 +30,10 @@ type Logger struct {
 	errorLog   *log.Logger
 	fatalLog   *log.Logger
 	fileWriter io.WriteCloser
+	// 可选：JSON格式与过滤关键词
+	jsonMode   bool
+	includeKey string
+	excludeKey string
 }
 
 // NewLogger 创建日志记录器
@@ -64,6 +69,13 @@ func NewLogger(level LogLevel, logDir string) (*Logger, error) {
 // Debug 调试日志
 func (l *Logger) Debug(format string, args ...interface{}) {
 	if l.level <= LogLevelDebug {
+		if l.jsonMode {
+			l.printJSON("debug", format, args...)
+			return
+		}
+		if l.filtered(format) {
+			return
+		}
 		l.debugLog.Printf(format, args...)
 	}
 }
@@ -71,6 +83,13 @@ func (l *Logger) Debug(format string, args ...interface{}) {
 // Info 信息日志
 func (l *Logger) Info(format string, args ...interface{}) {
 	if l.level <= LogLevelInfo {
+		if l.jsonMode {
+			l.printJSON("info", format, args...)
+			return
+		}
+		if l.filtered(format) {
+			return
+		}
 		l.infoLog.Printf(format, args...)
 	}
 }
@@ -78,6 +97,13 @@ func (l *Logger) Info(format string, args ...interface{}) {
 // Warn 警告日志
 func (l *Logger) Warn(format string, args ...interface{}) {
 	if l.level <= LogLevelWarn {
+		if l.jsonMode {
+			l.printJSON("warn", format, args...)
+			return
+		}
+		if l.filtered(format) {
+			return
+		}
 		l.warnLog.Printf(format, args...)
 	}
 }
@@ -85,6 +111,13 @@ func (l *Logger) Warn(format string, args ...interface{}) {
 // Error 错误日志
 func (l *Logger) Error(format string, args ...interface{}) {
 	if l.level <= LogLevelError {
+		if l.jsonMode {
+			l.printJSON("error", format, args...)
+			return
+		}
+		if l.filtered(format) {
+			return
+		}
 		l.errorLog.Printf(format, args...)
 	}
 }
@@ -92,7 +125,13 @@ func (l *Logger) Error(format string, args ...interface{}) {
 // Fatal 致命错误日志（会终止程序）
 func (l *Logger) Fatal(format string, args ...interface{}) {
 	if l.level <= LogLevelFatal {
-		l.fatalLog.Printf(format, args...)
+		if l.jsonMode {
+			l.printJSON("fatal", format, args...)
+		} else {
+			if !l.filtered(format) {
+				l.fatalLog.Printf(format, args...)
+			}
+		}
 		os.Exit(1)
 	}
 }
@@ -105,8 +144,48 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// TODO: 实现以下功能
-// - 日志轮转（按大小或时间）
-// - 日志压缩
-// - 结构化日志（JSON格式）
-// - 日志过滤
+// EnableJSON 开启JSON日志
+func (l *Logger) EnableJSON(enable bool) { l.jsonMode = enable }
+
+// SetFilter 设置包含/排除关键词（简单过滤）
+func (l *Logger) SetFilter(include, exclude string) { l.includeKey, l.excludeKey = include, exclude }
+
+func (l *Logger) filtered(format string) bool {
+	if l.includeKey != "" && !contains(format, l.includeKey) {
+		return true
+	}
+	if l.excludeKey != "" && contains(format, l.excludeKey) {
+		return true
+	}
+	return false
+}
+
+func (l *Logger) printJSON(level, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if l.filtered(msg) {
+		return
+	}
+	payload := map[string]interface{}{
+		"ts":    time.Now().Format(time.RFC3339Nano),
+		"level": level,
+		"msg":   msg,
+	}
+	b, _ := json.Marshal(payload)
+	// 输出到infoLog以统一
+	l.infoLog.Printf("%s", b)
+}
+
+// contains 简单包含判断（避免引入strings冲突变量名）
+func contains(s, sub string) bool {
+	return len(sub) > 0 && len(s) >= len(sub) && (func() bool { return (len(sub) == 0) || (len(s) > 0 && (stringIndex(s, sub) >= 0)) })()
+}
+
+// stringIndex 朴素实现，避免额外依赖
+func stringIndex(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}

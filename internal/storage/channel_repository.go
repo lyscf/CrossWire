@@ -181,7 +181,36 @@ func (r *ChannelRepository) GetSubChannels(parentChannelID string) ([]*models.Ch
 	return channels, nil
 }
 
-// TODO: 实现以下方法
-// - UpdateMetadata() 更新频道元数据
-// - GetChannelConfig() 获取频道配置
-// - RotateEncryptionKey() 轮换加密密钥
+// UpdateMetadata 更新频道元数据
+func (r *ChannelRepository) UpdateMetadata(channelID string, metadata models.JSONField) error {
+	return r.db.GetChannelDB().Model(&models.Channel{}).
+		Where("id = ?", channelID).
+		Update("metadata", metadata).Error
+}
+
+// GetChannelConfig 获取频道配置（最小集，供管理页展示）
+func (r *ChannelRepository) GetChannelConfig(channelID string) (map[string]interface{}, error) {
+	var ch models.Channel
+	if err := r.db.GetChannelDB().Where("id = ?", channelID).First(&ch).Error; err != nil {
+		return nil, err
+	}
+	cfg := map[string]interface{}{
+		"name":           ch.Name,
+		"transport_mode": ch.TransportMode,
+		"port":           ch.Port,
+		"interface":      ch.Interface,
+		"max_members":    ch.MaxMembers,
+		"key_version":    ch.KeyVersion,
+	}
+	return cfg, nil
+}
+
+// RotateEncryptionKey 轮换加密密钥（仅更新版本与新密钥，调用方负责在内存中同步）
+func (r *ChannelRepository) RotateEncryptionKey(channelID string, newKey []byte, newVersion int) error {
+	return r.db.GetChannelDB().Model(&models.Channel{}).
+		Where("id = ?", channelID).
+		Updates(map[string]interface{}{
+			"encryption_key": newKey,
+			"key_version":    newVersion,
+		}).Error
+}

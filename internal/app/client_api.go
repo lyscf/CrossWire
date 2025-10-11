@@ -43,7 +43,7 @@ func (a *App) StartClientMode(config ClientConfig) Response {
 			ServerAddress: config.ServerAddress,
 			SkipTLSVerify: true,
 		},
-		SyncInterval:    5 * time.Minute,
+		SyncInterval:    5 * time.Second,
 		MaxSyncMessages: 1000,
 		CacheSize:       5000,
 		CacheDuration:   24 * time.Hour,

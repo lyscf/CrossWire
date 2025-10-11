@@ -174,8 +174,54 @@ func (r *MemberRepository) GetMuteRecords(channelID string) ([]*models.MuteRecor
 	return records, nil
 }
 
-// TODO: 实现以下方法
-// - GetMembersByRole() 按角色获取成员
-// - SearchMembers() 搜索成员
-// - GetMemberStats() 获取成员统计信息
-// - UpdateMetadata() 更新成员元数据
+// GetMembersByRole 按角色获取成员
+func (r *MemberRepository) GetMembersByRole(channelID string, role models.Role) ([]*models.Member, error) {
+	var members []*models.Member
+	err := r.db.GetChannelDB().Where("channel_id = ? AND role = ?", channelID, role).
+		Order("joined_at ASC").Find(&members).Error
+	if err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// SearchMembers 搜索成员（昵称/邮箱）
+func (r *MemberRepository) SearchMembers(channelID string, keyword string, limit, offset int) ([]*models.Member, error) {
+	var members []*models.Member
+	q := r.db.GetChannelDB().Where("channel_id = ?", channelID)
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		q = q.Where("nickname LIKE ? OR json_extract(metadata,'$.email') LIKE ?", like, like)
+	}
+	if limit > 0 {
+		q = q.Limit(limit).Offset(offset)
+	}
+	if err := q.Order("joined_at ASC").Find(&members).Error; err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// GetMemberStats 获取成员统计信息
+func (r *MemberRepository) GetMemberStats(channelID string) (map[string]interface{}, error) {
+	var total int64
+	if err := r.db.GetChannelDB().Model(&models.Member{}).Where("channel_id = ?", channelID).Count(&total).Error; err != nil {
+		return nil, err
+	}
+	var online int64
+	if err := r.db.GetChannelDB().Model(&models.Member{}).Where("channel_id = ? AND status != ?", channelID, models.StatusOffline).Count(&online).Error; err != nil {
+		return nil, err
+	}
+	stats := map[string]interface{}{
+		"total":  total,
+		"online": online,
+	}
+	return stats, nil
+}
+
+// UpdateMetadata 更新成员元数据
+func (r *MemberRepository) UpdateMetadata(memberID string, metadata models.JSONField) error {
+	return r.db.GetChannelDB().Model(&models.Member{}).
+		Where("id = ?", memberID).
+		Update("metadata", metadata).Error
+}

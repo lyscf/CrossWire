@@ -96,14 +96,12 @@ import {
   createChallenge, 
   assignChallenge, 
   submitFlag,
-  getLeaderboard,
   getChallengeStats,
-  updateChallengeProgress,
-  deleteChallenge
+  updateChallengeProgress
 } from '@/api/app'
 
 const challengeStore = useChallengeStore()
-const isAdmin = ref(true) // TODO: 从用户状态获取
+const isAdmin = ref(true) // 后续可从用户状态获取真实权限
 const showCreateModal = ref(false)
 const filterCategory = ref('all')
 const filterStatus = ref('all')

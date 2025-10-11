@@ -179,6 +179,15 @@ func (rm *ReceiveManager) handleJoinResponse(payload map[string]interface{}) {
 	if chID, ok := payload["channel_id"].(string); ok && chID != "" && chID != rm.client.config.ChannelID {
 		rm.client.logger.Info("[ReceiveManager] Updating client ChannelID from response: %s", chID)
 		rm.client.config.ChannelID = chID
+
+		// 重新打开正确的频道数据库并刷新仓库，确保后续成员与消息落到正确库
+		if err := rm.client.db.OpenChannelDB(chID); err != nil {
+			rm.client.logger.Error("[ReceiveManager] Failed to reopen channel DB for %s: %v", chID, err)
+		} else {
+			if err := rm.client.initRepositories(); err != nil {
+				rm.client.logger.Error("[ReceiveManager] Failed to re-init repositories after channel switch: %v", err)
+			}
+		}
 	}
 
 	// 提取成员信息

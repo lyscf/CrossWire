@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -40,8 +41,12 @@ func NewApp(db *storage.Database) *App {
 	// 初始化事件总线（使用默认配置）
 	eventBus := events.NewEventBus(nil)
 
-	// 初始化日志器（Info级别，日志目录为./logs）
-	logger, err := utils.NewLogger(utils.LogLevelInfo, "./logs")
+	// 初始化日志器（Info级别，日志目录为./logs 的绝对路径）
+	logDir := "./logs"
+	if abs, err2 := filepath.Abs(logDir); err2 == nil {
+		logDir = abs
+	}
+	logger, err := utils.NewLogger(utils.LogLevelInfo, logDir)
 	if err != nil {
 		// 如果日志初始化失败，使用标准输出
 		logger = &utils.Logger{}
@@ -109,6 +114,7 @@ func getDefaultUserProfile() *UserProfile {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.logger.Info("CrossWire starting up...")
+	a.logger.Info("Logging initialized")
 
 	// 订阅事件总线，将后端事件转发到前端
 	a.subscribeEvents()
@@ -174,6 +180,9 @@ func (a *App) Shutdown(ctx context.Context) {
 
 	a.mode = ModeIdle
 	a.isRunning = false
+
+	// 关闭日志文件
+	_ = a.logger.Close()
 
 	a.logger.Info("CrossWire shutdown completed")
 }

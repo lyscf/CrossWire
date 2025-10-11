@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -154,7 +155,11 @@ func NewServer(
 
 	if logger == nil {
 		var err error
-		logger, err = utils.NewLogger(utils.LogLevelInfo, "logs")
+		logDir := "logs"
+		if abs, e2 := filepath.Abs(logDir); e2 == nil {
+			logDir = abs
+		}
+		logger, err = utils.NewLogger(utils.LogLevelInfo, logDir)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create logger: %w", err)
 		}
@@ -463,7 +468,7 @@ func (s *Server) handleIncomingMessage(msg *transport.Message) {
 	s.stats.TotalBytes += uint64(len(msg.Payload))
 	s.stats.mutex.Unlock()
 
-	// 根据消息类型路由（维持按 Transport 层类型，但去除TODO）
+	// 根据消息类型路由
 	switch msg.Type {
 	case transport.MessageTypeAuth:
 		s.authManager.HandleJoinRequest(msg)
@@ -579,6 +584,12 @@ func (s *Server) SendUserMessage(content string, msgType models.MessageType, _ s
 		s.logger.Error("[Server] broadcast message failed: %v", err)
 		return nil, fmt.Errorf("failed to broadcast message: %w", err)
 	}
+
+	// 向事件总线发布事件，便于本机前端立即刷新
+	// 发送事件（可选）
+	s.eventBus.Publish(events.EventMessageSent, events.NewMessageSentEvent(msg, s.config.ChannelID))
+	// 接收事件（用于前端消息流统一处理）
+	s.eventBus.Publish(events.EventMessageReceived, events.NewMessageReceivedEvent(msg, s.config.ChannelID))
 	s.logger.Info("[Server] User message sent id=%s", msg.ID)
 	return msg, nil
 }

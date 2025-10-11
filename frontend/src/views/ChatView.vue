@@ -152,7 +152,7 @@
 import { ref, reactive, h, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+// 事件由 App.vue 全局转发，这里监听 window 事件
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -203,6 +203,32 @@ const currentOffset = ref(0)
 const members = ref([])
 const subChannels = ref([])
 const memberStore = useMemberStore()
+const lastEventAt = ref(Date.now())
+let pollTimer = null
+
+// 统一提取消息内容：兼容对象/字符串/不同字段
+const extractContent = (m) => {
+  try {
+    let raw = m?.content ?? m?.Content
+    if (typeof raw === 'string') {
+      // 尝试解析JSON字符串
+      try {
+        const obj = JSON.parse(raw)
+        if (obj && typeof obj === 'object') {
+          return obj.text || obj.Text || obj.message || obj.Message || JSON.stringify(obj)
+        }
+      } catch {}
+      return raw
+    }
+    if (raw && typeof raw === 'object') {
+      return raw.text || raw.Text || raw.message || raw.Message || JSON.stringify(raw)
+    }
+    // 回退到扁平字段
+    return m?.content_text || m?.ContentText || ''
+  } catch {
+    return ''
+  }
+}
 
 import { 
   sendMessage, 
@@ -223,8 +249,7 @@ const handleSendMessage = async (messageData) => {
   try {
     const channelParam = currentChannelID.value === 'main' ? null : currentChannelID.value
     await sendMessage(content, 'text', channelParam)
-    // 发送成功后立即从后端拉取，使用编辑时间排序
-    await reloadChannelMessages()
+    // 发送成功后等待后端事件 message:received / message:updated 驱动刷新，避免同步拉取导致清空
   } catch (e) {
     message.error('发送失败: ' + (e.message || ''))
   }
@@ -276,8 +301,8 @@ onMounted(async () => {
       list.forEach(m => messages.value.push({
         id: m.id || m.ID,
         senderId: m.sender_id || m.SenderID,
-        senderName: m.sender_name || m.SenderName || 'user',
-        content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+        senderName: m.sender_name || m.SenderName || m.sender_nickname || m.SenderNickname || 'user',
+        content: extractContent(m),
         // 后端DTO时间字段为Unix秒，这里统一转毫秒
         timestamp: new Date(((m.edited_at || m.EditedAt || m.timestamp || m.Timestamp || 0) * 1000) || Date.now()),
         type: (m.type || m.Type || 'text')
@@ -356,43 +381,130 @@ onMounted(async () => {
     // ignore
   }
 
-  // 监听后端事件：实时追加收到的消息
-  unsubscribeEvent.value = EventsOn('app:event', (evt) => {
-    if (!evt) return
-    const type = evt.type || evt.Type
-    if (type !== 'message:received') return
-    const data = evt.data || evt.Data || {}
+  // 监听全局转发事件：实时追加收到的消息与更新
+  const handler = (ev) => {
+    const detail = ev?.detail
+    if (!detail || !detail.type) return
+    if (detail.type !== 'message:received' && detail.type !== 'message:updated') return
+    const data = detail.data || {}
     const m = data.message || data.Message || null
     if (!m) return
     const chId = m.channel_id || m.ChannelID || 'main'
     // 只处理当前频道
     const expectingMain = currentChannelID.value === 'main'
-    const isMain = chId === (expectingMain ? (m.room_type ? 'main' : chId) : currentChannelID.value)
     if (!expectingMain && chId !== currentChannelID.value) return
 
     const normalized = {
       id: m.id || m.ID,
       senderId: m.sender_id || m.SenderID,
-      senderName: m.sender_nickname || m.SenderNickname || 'user',
-      content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.ContentText || '',
+      senderName: m.sender_name || m.SenderName || m.sender_nickname || m.SenderNickname || 'user',
+      content: extractContent(m),
       editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
       createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
       type: (m.type || m.Type || 'text')
     }
-    // 去重
-    if (messages.value.find(x => x.id === normalized.id)) return
-    // 追加后升序排序
-    const next = [...messages.value, {
-      id: normalized.id,
-      senderId: normalized.senderId,
-      senderName: normalized.senderName,
-      content: normalized.content,
-      type: normalized.type,
-      timestamp: new Date(((normalized.editedAt || normalized.createdAt) * 1000) || Date.now())
-    }]
-    next.sort((a, b) => (a.timestamp?.getTime?.() || 0) - (b.timestamp?.getTime?.() || 0))
-    messages.value = next
-  })
+
+    const ts = new Date(((normalized.editedAt || normalized.createdAt) * 1000) || Date.now())
+    const index = messages.value.findIndex(x => x.id === normalized.id)
+    if (index >= 0) {
+      // 更新已有消息
+      const updated = { ...messages.value[index], senderName: normalized.senderName, content: normalized.content, type: normalized.type, timestamp: ts }
+      const next = [...messages.value]
+      next[index] = updated
+      next.sort((a, b) => (a.timestamp?.getTime?.() || 0) - (b.timestamp?.getTime?.() || 0))
+      messages.value = next
+    } else {
+      // 新增
+      const next = [...messages.value, {
+        id: normalized.id,
+        senderId: normalized.senderId,
+        senderName: normalized.senderName,
+        content: normalized.content,
+        type: normalized.type,
+        timestamp: ts
+      }]
+      next.sort((a, b) => (a.timestamp?.getTime?.() || 0) - (b.timestamp?.getTime?.() || 0))
+      messages.value = next
+    }
+
+    // 记录事件时间，用于轮询兜底判定
+    lastEventAt.value = Date.now()
+  }
+  window.addEventListener('cw:app:event', handler)
+
+  // 监听成员/状态/频道事件以刷新成员列表与频道标签
+  const onMemberEvent = async (e) => {
+    const detail = e?.detail || {}
+    const t = detail.type
+    if (!t) return
+    if (t === 'member:joined' || t === 'member:left' || t === 'member:updated' || t === 'member:muted' || t === 'member:unmuted' || t === 'member:role_changed' || t === 'member:banned' || t === 'member:unbanned' || t === 'status:changed') {
+      try {
+        const memberList = await getMembers()
+        if (Array.isArray(memberList)) {
+          members.value = memberList.map(m => ({
+            id: m.id || m.ID,
+            nickname: m.nickname || m.Nickname || 'Unknown',
+            role: m.role || m.Role || '队员',
+            status: m.status || m.Status || 'offline',
+            skills: m.skills || m.Skills || [],
+            currentTask: m.current_task || m.CurrentTask || null
+          }))
+        }
+      } catch {}
+    }
+  }
+  window.addEventListener('cw:member:update', onMemberEvent)
+  window.addEventListener('cw:connection:event', onMemberEvent)
+  window.addEventListener('cw:app:event', onMemberEvent)
+
+  // 启动轮询兜底：每5秒增量刷新一次，防止事件丢失导致不更新（尤其服务端前端）
+  const refreshMessagesIncremental = async () => {
+    try {
+      const list = await getMessages(pageSize, 0)
+      if (!Array.isArray(list)) return
+      const incoming = list.map(m => ({
+        id: m.id || m.ID,
+        senderId: m.sender_id || m.SenderID,
+        senderName: m.sender_name || m.SenderName || m.sender_nickname || m.SenderNickname || 'user',
+        content: extractContent(m),
+        editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
+        createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
+        type: (m.type || m.Type || 'text')
+      }))
+      // 合并到现有消息
+      const map = new Map(messages.value.map(x => [x.id, x]))
+      for (const n of incoming) {
+        const ts = new Date(((n.editedAt || n.createdAt) * 1000) || Date.now())
+        if (map.has(n.id)) {
+          const prev = map.get(n.id)
+          map.set(n.id, { ...prev, senderName: n.senderName, content: n.content, type: n.type, timestamp: ts })
+        } else {
+          map.set(n.id, { id: n.id, senderId: n.senderId, senderName: n.senderName, content: n.content, type: n.type, timestamp: ts })
+        }
+      }
+      const merged = Array.from(map.values())
+      merged.sort((a, b) => (a.timestamp?.getTime?.() || 0) - (b.timestamp?.getTime?.() || 0))
+      messages.value = merged
+    } catch {}
+  }
+
+  pollTimer = setInterval(async () => {
+    // 若超过3秒未收到事件，则执行一次增量刷新
+    if (Date.now() - lastEventAt.value > 3000) {
+      await refreshMessagesIncremental()
+    }
+  }, 5000)
+
+  unsubscribeEvent.value = () => {
+    window.removeEventListener('cw:app:event', handler)
+    window.removeEventListener('cw:member:update', onMemberEvent)
+    window.removeEventListener('cw:connection:event', onMemberEvent)
+    window.removeEventListener('cw:app:event', onMemberEvent)
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+  }
 })
 
 const unsubscribeEvent = ref(() => {})
@@ -425,8 +537,8 @@ const reloadChannelMessages = async () => {
     const normalized = list.map(m => ({
       id: m.id || m.ID,
       senderId: m.sender_id || m.SenderID,
-      senderName: m.sender_name || m.SenderName || 'user',
-      content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+      senderName: m.sender_name || m.SenderName || m.sender_nickname || m.SenderNickname || 'user',
+      content: extractContent(m),
       editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
       createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
       type: (m.type || m.Type || 'text')
@@ -462,8 +574,8 @@ const loadOlderMessages = async () => {
     const normalized = (Array.isArray(list) ? list : []).map(m => ({
       id: m.id || m.ID,
       senderId: m.sender_id || m.SenderID,
-      senderName: m.sender_name || m.SenderName || 'user',
-      content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+      senderName: m.sender_name || m.SenderName || m.sender_nickname || m.SenderNickname || 'user',
+      content: extractContent(m),
       editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
       createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
       type: (m.type || m.Type || 'text')

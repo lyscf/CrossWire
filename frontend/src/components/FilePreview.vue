@@ -82,7 +82,6 @@ const formatSize = (bytes) => {
 }
 
 const handleDownload = () => {
-  // TODO: 实现文件下载
   const link = document.createElement('a')
   link.href = props.file.url
   link.download = props.file.name

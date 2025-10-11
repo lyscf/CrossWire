@@ -288,7 +288,7 @@ const loadMembers = async () => {
         id: m.id || m.ID,
         name: m.nickname || m.Nickname || 'Unknown',
         online: m.status === 'online',
-        progress: 0 // TODO: 从题目进度API获取
+        progress: 0 // 可接入题目进度API以显示真实进度
       }))
     }
   } catch (error) {
@@ -333,36 +333,22 @@ const formatTime = (timestamp) => {
   return dayjs(timestamp).format('HH:mm')
 }
 
-const sendMessage = () => {
+const sendMessage = async () => {
   if (!messageInput.value.trim()) return
-
-  roomMessages.value.push({
-    id: Date.now().toString(),
-    senderId: 'me',
-    senderName: '我',
-    type: 'text',
-    content: messageInput.value,
-    timestamp: new Date()
-  })
-
+  // 后端发送到子频道
+  await sendMessageAPI(messageInput.value, 'text', props.challenge?.sub_channel_id || null)
   messageInput.value = ''
+  // 可选：刷新本房间消息
+  await loadRoomMessages()
 }
 
-const sendCode = () => {
+const sendCode = async () => {
   if (!codeInput.value.trim()) return
-
-  roomMessages.value.push({
-    id: Date.now().toString(),
-    senderId: 'me',
-    senderName: '我',
-    type: 'code',
-    language: codeLanguage.value,
-    code: codeInput.value,
-    timestamp: new Date()
-  })
-
+  // 简化：作为文本发送或调用 sendCodeMessage（若需严格语义可替换）
+  await sendMessageAPI(codeInput.value, 'code', props.challenge?.sub_channel_id || null)
   codeInput.value = ''
   showCodeEditor.value = false
+  await loadRoomMessages()
 }
 
 const handleKeyDown = (e) => {

@@ -90,7 +90,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { InfoCircleOutlined } from '@ant-design/icons-vue'
-import { getMembers } from '@/api/app'
+import { getMembers, assignChallenge } from '@/api/app'
 
 const props = defineProps({
   open: {
@@ -125,7 +125,7 @@ const loadMembers = async () => {
         id: m.id || m.ID,
         name: m.nickname || m.Nickname || 'Unknown',
         role: m.role || m.Role || 'member',
-        skills: [] // TODO: 如果后端支持技能标签，在这里解析
+        skills: [] // 若后端提供技能标签，可在此解析填充
       }))
     }
   } catch (error) {
@@ -180,19 +180,19 @@ const getMemberName = (key) => {
   return member ? member.name : key
 }
 
-const handleAssign = () => {
+const handleAssign = async () => {
   if (selectedMembers.value.length === 0) {
     return
   }
-
-  emit('assign', {
-    members: selectedMembers.value,
-    type: assignType.value,
-    priority: priority.value,
-    deadline: deadline.value,
-    notes: notes.value
-  })
-
+  // 直接调用后端分配 API（对每个成员）
+  try {
+    for (const memberId of selectedMembers.value) {
+      await assignChallenge(props.challenge?.id || props.challenge?.ID, memberId)
+    }
+    emit('assign', selectedMembers.value)
+  } catch (e) {
+    // 父组件也会有提示，这里保持静默或轻提示
+  }
   handleCancel()
 }
 

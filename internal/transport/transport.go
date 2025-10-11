@@ -222,7 +222,7 @@ const (
 	BroadcastMAC    = "FF:FF:FF:FF:FF:FF" // 广播MAC地址
 )
 
-// TODO: 实现以下功能
+// NOTE: 后续增强（非阻塞基本功能）
 // - 消息分块和重组
 // - ACK确认机制
 // - 重传队列

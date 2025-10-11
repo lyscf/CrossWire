@@ -1,6 +1,8 @@
 package app
 
 import (
+	"time"
+
 	"crosswire/internal/models"
 )
 
@@ -229,6 +231,184 @@ func (a *App) SearchMessages(req SearchMessagesRequest) Response {
 	}
 
 	return NewSuccessResponse(messageDTOs)
+}
+
+// GetMessagesByTimeRange 按时间范围获取消息（Unix秒）
+func (a *App) GetMessagesByTimeRange(startSec, endSec int64, limit, offset int) Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	var channelID string
+	if mode == ModeServer && srv != nil {
+		ch, _ := srv.GetChannel()
+		if ch == nil {
+			return NewErrorResponse("no_channel", "未初始化频道", "")
+		}
+		channelID = ch.ID
+	} else if mode == ModeClient && cli != nil {
+		channelID = cli.GetChannelID()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	var start, end time.Time
+	if startSec > 0 {
+		start = time.Unix(startSec, 0)
+	}
+	if endSec > 0 {
+		end = time.Unix(endSec, 0)
+	}
+
+	list, err := a.db.MessageRepo().GetMessagesByTimeRange(channelID, start, end, limit, offset)
+	if err != nil {
+		return NewErrorResponse("db_error", "获取消息失败", err.Error())
+	}
+	dtos := make([]*MessageDTO, 0, len(list))
+	for _, m := range list {
+		dtos = append(dtos, a.messageToDTO(m))
+	}
+	return NewSuccessResponse(dtos)
+}
+
+// GetMessagesByTag 按标签获取消息
+func (a *App) GetMessagesByTag(tag string, limit, offset int) Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+	if tag == "" {
+		return NewErrorResponse("invalid_request", "tag 不能为空", "")
+	}
+
+	var channelID string
+	if mode == ModeServer && srv != nil {
+		ch, _ := srv.GetChannel()
+		if ch == nil {
+			return NewErrorResponse("no_channel", "未初始化频道", "")
+		}
+		channelID = ch.ID
+	} else if mode == ModeClient && cli != nil {
+		channelID = cli.GetChannelID()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+
+	list, err := a.db.MessageRepo().GetMessagesByTag(channelID, tag, limit, offset)
+	if err != nil {
+		return NewErrorResponse("db_error", "获取消息失败", err.Error())
+	}
+	dtos := make([]*MessageDTO, 0, len(list))
+	for _, m := range list {
+		dtos = append(dtos, a.messageToDTO(m))
+	}
+	return NewSuccessResponse(dtos)
+}
+
+// GetMentionedMessages 获取@我的消息
+func (a *App) GetMentionedMessages(limit, offset int) Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+
+	var channelID, myID string
+	if mode == ModeServer && srv != nil {
+		ch, _ := srv.GetChannel()
+		if ch == nil {
+			return NewErrorResponse("no_channel", "未初始化频道", "")
+		}
+		channelID = ch.ID
+		myID = "server"
+	} else if mode == ModeClient && cli != nil {
+		channelID = cli.GetChannelID()
+		myID = cli.GetMemberID()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+	if myID == "" {
+		return NewErrorResponse("invalid_state", "缺少当前用户ID", "")
+	}
+
+	list, err := a.db.MessageRepo().GetMentionedMessages(channelID, myID, limit, offset)
+	if err != nil {
+		return NewErrorResponse("db_error", "获取消息失败", err.Error())
+	}
+	dtos := make([]*MessageDTO, 0, len(list))
+	for _, m := range list {
+		dtos = append(dtos, a.messageToDTO(m))
+	}
+	return NewSuccessResponse(dtos)
+}
+
+// GetMessageStats 获取消息按天统计（返回按日期升序的数组）
+func (a *App) GetMessageStats(fromSec, toSec int64) Response {
+	a.mu.RLock()
+	mode := a.mode
+	srv := a.server
+	cli := a.client
+	a.mu.RUnlock()
+
+	if !a.isRunning {
+		return NewErrorResponse("not_running", "未连接到频道", "")
+	}
+	var channelID string
+	if mode == ModeServer && srv != nil {
+		ch, _ := srv.GetChannel()
+		if ch == nil {
+			return NewErrorResponse("no_channel", "未初始化频道", "")
+		}
+		channelID = ch.ID
+	} else if mode == ModeClient && cli != nil {
+		channelID = cli.GetChannelID()
+	} else {
+		return NewErrorResponse("invalid_mode", "无效的运行模式", "")
+	}
+	var from, to time.Time
+	if fromSec > 0 {
+		from = time.Unix(fromSec, 0)
+	}
+	if toSec > 0 {
+		to = time.Unix(toSec, 0)
+	}
+	m, err := a.db.MessageRepo().GetMessageStats(channelID, from, to)
+	if err != nil {
+		return NewErrorResponse("db_error", "获取统计失败", err.Error())
+	}
+	// 转数组并排序
+	type item struct {
+		Day   string `json:"day"`
+		Count int64  `json:"count"`
+	}
+	items := make([]item, 0, len(m))
+	for k, v := range m {
+		items = append(items, item{Day: k, Count: v})
+	}
+	// 简易排序（冒泡替代，避免引入sort），数据量小
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			if items[j].Day < items[i].Day {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+	return NewSuccessResponse(items)
 }
 
 // DeleteMessage 删除消息（仅服务端）

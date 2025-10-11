@@ -268,47 +268,6 @@ func (db *Database) Close() error {
 	return nil
 }
 
-// TODO: 实现以下数据库操作方法
-// - CreateChannel() 创建频道
-// - GetChannel() 获取频道信息
-// - UpdateChannel() 更新频道
-// - DeleteChannel() 删除频道
-//
-// - AddMember() 添加成员
-// - GetMembers() 获取成员列表
-// - UpdateMemberStatus() 更新成员状态
-// - RemoveMember() 移除成员
-//
-// - SaveMessage() 保存消息
-// - GetMessages() 获取消息列表
-// - SearchMessages() 搜索消息（全文搜索）
-// - DeleteMessage() 删除消息
-//
-// - SaveFile() 保存文件
-// - GetFile() 获取文件
-// - GetFiles() 获取文件列表
-//
-// - CreateChallenge() 创建题目
-// - GetChallenges() 获取题目列表
-// - AssignChallenge() 分配题目
-// - SubmitFlag() 提交 Flag
-// - UpdateProgress() 更新进度
-//
-// - SaveAuditLog() 保存审计日志
-// - GetAuditLogs() 获取审计日志
-//
-// - MuteMember() 禁言成员
-// - UnmuteMember() 解除禁言
-// - IsMuted() 检查是否被禁言
-//
-// - PinMessage() 置顶消息
-// - UnpinMessage() 取消置顶
-// - GetPinnedMessages() 获取置顶消息
-//
-// - SaveCache() 保存缓存
-// - GetCache() 获取缓存
-// - CleanExpiredCache() 清理过期缓存
-
 // ==================== 频道（Channel） ====================
 
 // CreateChannel 创建频道
