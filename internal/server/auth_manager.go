@@ -1,7 +1,7 @@
 package server
 
 import (
-	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -91,12 +91,21 @@ func NewAuthManager(server *Server) *AuthManager {
 // HandleJoinRequest 处理加入请求
 // 参考: docs/PROTOCOL.md - 2.2.2 认证握手
 func (am *AuthManager) HandleJoinRequest(transportMsg *transport.Message) {
-	am.server.logger.Debug("[AuthManager] Join request from: %s", transportMsg.SenderID)
+	am.server.logger.Debug("[AuthManager] Join request from: %s addr=%s len=%d", transportMsg.SenderID, transportMsg.SenderAddr, len(transportMsg.Payload))
 
 	// 1. 解密请求（使用密码派生的密钥）
 	decrypted, err := am.server.crypto.DecryptMessage(transportMsg.Payload)
 	if err != nil {
-		am.server.logger.Error("[AuthManager] Failed to decrypt join request: %v", err)
+		// 打印更多上下文用于排查：密文前缀与当前频道密钥指纹
+		previewLen := 16
+		if l := len(transportMsg.Payload); l < previewLen {
+			previewLen = l
+		}
+		cipherHead := fmt.Sprintf("%x", transportMsg.Payload[:previewLen])
+		ck := am.server.crypto.GetChannelKey()
+		ckHash := sha256.Sum256(ck)
+		am.server.logger.Error("[AuthManager] Failed to decrypt join request: %v | addr=%s cipher_len=%d cipher_head=%s channel_id=%s key_fp=%x",
+			err, transportMsg.SenderAddr, len(transportMsg.Payload), cipherHead, am.server.config.ChannelID, ckHash[:4])
 		am.sendJoinResponse(transportMsg.SenderID, false, "Invalid password or encryption", nil)
 		return
 	}
@@ -204,56 +213,58 @@ func (am *AuthManager) HandleJoinRequest(transportMsg *transport.Message) {
 
 // sendJoinResponse 发送加入响应
 func (am *AuthManager) sendJoinResponse(to string, success bool, errorMsg string, response *JoinResponse) {
-	if response == nil {
-		response = &JoinResponse{
-			Success:   success,
-			Message:   errorMsg,
-			Timestamp: time.Now().Unix(),
+	// 为了兼容客户端，响应格式统一为：
+	// {
+	//   "type": "auth.join_response",
+	//   "success": true/false,
+	//   "error": "...",           // 失败时
+	//   "member": {"id":"...","nickname":"..."},
+	//   "channel_id": "...",
+	//   "timestamp": 169...
+	// }
+
+	resp := map[string]interface{}{
+		"type":       "auth.join_response",
+		"success":    success,
+		"channel_id": am.server.config.ChannelID,
+		"timestamp":  time.Now().Unix(),
+	}
+	if !success {
+		resp["error"] = errorMsg
+	}
+
+	if response != nil && success {
+		// 使用传入的成员信息
+		memberID := response.MemberID
+		nickname := ""
+		if len(response.MemberList) > 0 {
+			nickname = response.MemberList[0].Nickname
+		}
+		resp["member"] = map[string]interface{}{
+			"id":       memberID,
+			"nickname": nickname,
 		}
 	}
 
-	// 序列化响应
-	responseData, err := json.Marshal(response)
+	// 序列化并加密
+	bytes, err := json.Marshal(resp)
 	if err != nil {
 		am.server.logger.Error("[AuthManager] Failed to marshal join response: %v", err)
 		return
 	}
-
-	// 加密响应
-	encrypted, err := am.server.crypto.EncryptMessage(responseData)
+	encrypted, err := am.server.crypto.EncryptMessage(bytes)
 	if err != nil {
 		am.server.logger.Error("[AuthManager] Failed to encrypt join response: %v", err)
 		return
 	}
 
-	// 签名（如果启用）
-	var signature []byte
-	if am.server.config.EnableSignature {
-		signature = ed25519.Sign(am.server.config.PrivateKey, encrypted)
-	}
-
-	// 构造签名载荷
-	signedPayload := &SignedPayload{
-		Message:   encrypted,
-		Signature: signature,
-		Timestamp: time.Now().Unix(),
-		ServerID:  am.server.config.ChannelID,
-	}
-
-	payloadData, err := json.Marshal(signedPayload)
-	if err != nil {
-		am.server.logger.Error("[AuthManager] Failed to marshal signed payload: %v", err)
-		return
-	}
-
-	// 发送响应（广播）
+	// 发送响应（单播给新成员）：设置 SenderID 为该成员ID，便于客户端识别
 	transportMsg := &transport.Message{
 		Type:      transport.MessageTypeAuth,
-		SenderID:  am.server.config.ChannelID,
-		Payload:   payloadData,
+		SenderID:  response.MemberID,
+		Payload:   encrypted,
 		Timestamp: time.Now(),
 	}
-
 	if err := am.server.transport.SendMessage(transportMsg); err != nil {
 		am.server.logger.Error("[AuthManager] Failed to send join response: %v", err)
 	}

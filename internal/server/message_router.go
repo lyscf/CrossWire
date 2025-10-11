@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -874,8 +875,10 @@ func (mr *MessageRouter) getMessagesSince(sinceTimestamp int64, limit int) ([]in
 		}
 	}
 
-	// 按时间戳排序（最旧的在前）
-	// 简化处理：假设已经按时间排序
+	// 按时间戳升序排序（最旧的在前）
+	sort.Slice(filteredMessages, func(i, j int) bool {
+		return filteredMessages[i].Timestamp.Before(filteredMessages[j].Timestamp)
+	})
 
 	// 应用限制
 	hasMore := false

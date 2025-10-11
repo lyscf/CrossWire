@@ -71,6 +71,11 @@ const props = defineProps({
   messages: {
     type: Array,
     default: () => []
+  },
+  // 当加载更早的消息时，避免自动滚动到底部
+  suppressAutoScroll: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -100,7 +105,9 @@ const scrollToBottom = () => {
 watch(
   () => props.messages.length,
   () => {
-    scrollToBottom()
+    if (!props.suppressAutoScroll) {
+      scrollToBottom()
+    }
   }
 )
 

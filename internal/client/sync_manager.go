@@ -166,14 +166,14 @@ func (sm *SyncManager) doSync() {
 	// TODO: 实现请求-响应匹配机制
 	// 暂时假设响应会通过receiveManager的handleSyncResponse处理
 
-	// 5. 更新同步时间
-	sm.lastSyncTime = time.Now()
-
+	// 5. 此处不再用当前时间覆盖 lastSyncTime，
+	//    让 processSyncMessages 基于消息时间推进水位
 	duration := time.Since(startTime)
 
 	sm.stats.mutex.Lock()
 	sm.stats.SuccessfulSyncs++
-	sm.stats.LastSyncTime = sm.lastSyncTime
+	// 记录本次同步完成时间到统计，但不影响消息水位
+	sm.stats.LastSyncTime = time.Now()
 	sm.stats.LastSyncDuration = duration
 	sm.stats.mutex.Unlock()
 
@@ -206,9 +206,9 @@ func (sm *SyncManager) HandleSyncResponse(data []byte) {
 	// 3. 检查是否有更多数据
 	hasMore, _ := response["has_more"].(bool)
 	if hasMore {
-		// 触发下一次同步
+		// 触发下一次同步（小延迟减少争用）
 		sm.client.logger.Debug("[SyncManager] More data available, triggering next sync")
-		sm.TriggerSync()
+		time.AfterFunc(30*time.Millisecond, func() { sm.TriggerSync() })
 	}
 
 	sm.client.logger.Info("[SyncManager] Sync response processed")
@@ -219,6 +219,9 @@ func (sm *SyncManager) processSyncMessages(messagesData []interface{}) {
 	sm.client.logger.Debug("[SyncManager] Processing %d synced messages", len(messagesData))
 
 	var syncedCount uint64
+	// 跟踪本批次最大时间戳与对应消息ID，用于推进水位
+	maxTimestamp := sm.lastSyncTime
+	maxMsgID := sm.lastMessageID
 
 	for _, msgData := range messagesData {
 		msgMap, ok := msgData.(map[string]interface{})
@@ -258,10 +261,17 @@ func (sm *SyncManager) processSyncMessages(messagesData []interface{}) {
 			}
 		}
 
-		// 更新最后消息ID
-		if msg.Timestamp.After(sm.lastSyncTime) || sm.lastMessageID == "" {
-			sm.lastMessageID = msg.ID
+		// 推进水位：按时间戳最大（若相等按ID最大）
+		if msg.Timestamp.After(maxTimestamp) || (msg.Timestamp.Equal(maxTimestamp) && msg.ID > maxMsgID) {
+			maxTimestamp = msg.Timestamp
+			maxMsgID = msg.ID
 		}
+	}
+
+	// 批量处理完成后，统一更新水位与lastMessageID
+	if maxTimestamp.After(sm.lastSyncTime) {
+		sm.lastSyncTime = maxTimestamp
+		sm.lastMessageID = maxMsgID
 	}
 
 	sm.stats.mutex.Lock()

@@ -405,6 +405,7 @@ func (s *Server) initTransport() error {
 		tr.SetChannelInfo(s.config.ChannelID, s.config.ChannelName)
 	case *transport.HTTPSTransport:
 		tr.SetMode("server")
+		tr.SetChannelInfo(s.config.ChannelID, s.config.ChannelName)
 	}
 
 	// 注册文件接收回调（将文件片段转换为服务器内部处理）

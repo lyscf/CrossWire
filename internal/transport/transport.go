@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"crosswire/internal/models"
+	"crosswire/internal/utils"
 )
 
 // TransportMode 使用models包的定义
@@ -100,6 +101,17 @@ type Config struct {
 	// 重传配置
 	MaxRetries int
 	RetryDelay time.Duration
+
+	// 日志（可选）
+	Logger *utils.Logger
+
+	// 目标地址（HTTPS客户端模式）
+	// 例如："example.com" 或 "1.2.3.4"；端口由 Port 指定
+	ServerAddress string
+
+	// TLS 相关（HTTPS客户端模式）
+	// 是否跳过证书校验（自签名场景用于开发/内网）
+	SkipTLSVerify bool
 }
 
 // Message 传输层消息

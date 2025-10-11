@@ -105,8 +105,11 @@
             </a-alert>
           </div>
 
-          <!-- 消息列表 -->
-          <MessageList :messages="messages" />
+          <!-- 消息列表 + 加载更早 -->
+          <div style="padding: 8px 0; text-align: center;" v-if="hasMore">
+            <a-button size="small" :loading="loadingMore" @click="loadOlderMessages">加载更早消息</a-button>
+          </div>
+          <MessageList :messages="messages" :suppress-auto-scroll="loadingMore" />
         </a-layout-content>
 
         <!-- 底部输入框 -->
@@ -146,9 +149,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, h, onMounted, computed } from 'vue'
+import { ref, reactive, h, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
+import { EventsOn } from '../../wailsjs/runtime/runtime'
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -192,6 +196,10 @@ const currentUser = ref({
 // 真实数据（从后端加载）
 const pinnedMessages = ref([])
 const messages = ref([])
+const loadingMore = ref(false)
+const hasMore = ref(true)
+const pageSize = 200
+const currentOffset = ref(0)
 const members = ref([])
 const subChannels = ref([])
 const memberStore = useMemberStore()
@@ -261,7 +269,7 @@ onMounted(async () => {
   
   // 加载消息
   try {
-    const list = await getMessages(50, 0)
+    const list = await getMessages(pageSize, 0)
     console.log('Loaded messages:', list)
     if (Array.isArray(list)) {
       // 简单映射到本地结构
@@ -270,7 +278,8 @@ onMounted(async () => {
         senderId: m.sender_id || m.SenderID,
         senderName: m.sender_name || m.SenderName || 'user',
         content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
-        timestamp: new Date(m.timestamp || m.Timestamp || Date.now()),
+        // 后端DTO时间字段为Unix秒，这里统一转毫秒
+        timestamp: new Date(((m.edited_at || m.EditedAt || m.timestamp || m.Timestamp || 0) * 1000) || Date.now()),
         type: (m.type || m.Type || 'text')
       }))
     }
@@ -346,6 +355,49 @@ onMounted(async () => {
   } catch (e) {
     // ignore
   }
+
+  // 监听后端事件：实时追加收到的消息
+  unsubscribeEvent.value = EventsOn('app:event', (evt) => {
+    if (!evt) return
+    const type = evt.type || evt.Type
+    if (type !== 'message:received') return
+    const data = evt.data || evt.Data || {}
+    const m = data.message || data.Message || null
+    if (!m) return
+    const chId = m.channel_id || m.ChannelID || 'main'
+    // 只处理当前频道
+    const expectingMain = currentChannelID.value === 'main'
+    const isMain = chId === (expectingMain ? (m.room_type ? 'main' : chId) : currentChannelID.value)
+    if (!expectingMain && chId !== currentChannelID.value) return
+
+    const normalized = {
+      id: m.id || m.ID,
+      senderId: m.sender_id || m.SenderID,
+      senderName: m.sender_nickname || m.SenderNickname || 'user',
+      content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.ContentText || '',
+      editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
+      createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
+      type: (m.type || m.Type || 'text')
+    }
+    // 去重
+    if (messages.value.find(x => x.id === normalized.id)) return
+    // 追加后升序排序
+    const next = [...messages.value, {
+      id: normalized.id,
+      senderId: normalized.senderId,
+      senderName: normalized.senderName,
+      content: normalized.content,
+      type: normalized.type,
+      timestamp: new Date(((normalized.editedAt || normalized.createdAt) * 1000) || Date.now())
+    }]
+    next.sort((a, b) => (a.timestamp?.getTime?.() || 0) - (b.timestamp?.getTime?.() || 0))
+    messages.value = next
+  })
+})
+
+const unsubscribeEvent = ref(() => {})
+onUnmounted(() => {
+  try { unsubscribeEvent.value && unsubscribeEvent.value() } catch {}
 })
 
 const handleChannelSelect = async (channelId) => {
@@ -364,9 +416,9 @@ const reloadChannelMessages = async () => {
   const channelId = currentChannelID.value
   const useByChannel = channelId !== 'main'
   try {
-    list = useByChannel ? await getMessagesByChannel(channelId, 200, 0) : await getMessages(200, 0)
+    list = useByChannel ? await getMessagesByChannel(channelId, pageSize, 0) : await getMessages(pageSize, 0)
   } catch (e) {
-    list = await getMessages(200, 0)
+    list = await getMessages(pageSize, 0)
   }
   messages.value = []
   if (Array.isArray(list)) {
@@ -389,6 +441,62 @@ const reloadChannelMessages = async () => {
       type: n.type,
       timestamp: new Date(((n.editedAt || n.createdAt) * 1000) || Date.now())
     }))
+  }
+}
+
+// 加载更早消息（下一页）
+const loadOlderMessages = async () => {
+  if (loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const channelId = currentChannelID.value
+    const useByChannel = channelId !== 'main'
+    const nextOffset = (messages.value?.length || 0)
+    let list = []
+    try {
+      list = useByChannel ? await getMessagesByChannel(channelId, pageSize, nextOffset) : await getMessages(pageSize, nextOffset)
+    } catch (e) {
+      list = []
+    }
+    // 规范化
+    const normalized = (Array.isArray(list) ? list : []).map(m => ({
+      id: m.id || m.ID,
+      senderId: m.sender_id || m.SenderID,
+      senderName: m.sender_name || m.SenderName || 'user',
+      content: (m.content && (m.content.text || m.content.Text)) || m.content_text || m.Content || '',
+      editedAt: (typeof m.edited_at === 'number' ? m.edited_at : (m.EditedAt || 0)),
+      createdAt: (typeof m.timestamp === 'number' ? m.timestamp : (m.Timestamp || 0)),
+      type: (m.type || m.Type || 'text')
+    }))
+    // 合并去重（旧消息在前，保证时间升序）
+    const merged = [...normalized, ...messages.value.map(n => ({
+      id: n.id,
+      senderId: n.senderId,
+      senderName: n.senderName,
+      content: n.content,
+      type: n.type,
+      editedAt: Math.floor((n.timestamp?.getTime?.() || Date.now()) / 1000),
+      createdAt: Math.floor((n.timestamp?.getTime?.() || Date.now()) / 1000),
+    }))]
+    const uniqueMap = new Map()
+    merged.forEach(n => {
+      if (!uniqueMap.has(n.id)) uniqueMap.set(n.id, n)
+    })
+    const uniq = Array.from(uniqueMap.values())
+    uniq.sort((a, b) => (a.editedAt || a.createdAt) - (b.editedAt || b.createdAt))
+    messages.value = uniq.map(n => ({
+      id: n.id,
+      senderId: n.senderId,
+      senderName: n.senderName,
+      content: n.content,
+      type: n.type,
+      timestamp: new Date(((n.editedAt || n.createdAt) * 1000) || Date.now())
+    }))
+    // hasMore：如果返回数量小于pageSize，说明没有更多
+    hasMore.value = (Array.isArray(list) && list.length === pageSize)
+    currentOffset.value = nextOffset
+  } finally {
+    loadingMore.value = false
   }
 }
 </script>

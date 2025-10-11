@@ -108,9 +108,14 @@
               </a-form-item>
 
               <a-form-item :wrapper-col="{ offset: 6, span: 18 }">
-                <a-button type="primary" html-type="submit" block size="large">
-                  <LoginOutlined /> 连接服务器
-                </a-button>
+                <a-space>
+                  <a-button type="primary" html-type="submit">
+                    <LoginOutlined /> 连接服务器
+                  </a-button>
+                  <a-button type="default" @click="fetchInfo" :loading="fetchingInfo">
+                    获取频道信息
+                  </a-button>
+                </a-space>
               </a-form-item>
             </a-form>
           </a-tab-pane>
@@ -131,14 +136,19 @@
         </a-tabs>
       </a-card>
 
-      <!-- 用户信息表单 (连接后显示) -->
+      <!-- 频道信息展示 + 用户信息表单 (先展示频道信息，再输入密码) -->
       <a-modal
         v-model:open="showUserInfoModal"
-        title="填写个人信息"
+        title="加入频道"
         :footer="null"
         :closable="false"
         :maskClosable="false"
       >
+        <a-card size="small" style="margin-bottom: 12px;">
+          <p><strong>频道名称：</strong>{{ channelInfo.channel_name || '未知' }}</p>
+          <p><strong>频道ID：</strong>{{ channelInfo.channel_id || '未知' }}</p>
+          <p><strong>模式：</strong>{{ (channelInfo.mode || 'https').toUpperCase() }}</p>
+        </a-card>
         <a-form
           :model="userInfo"
           :label-col="{ span: 6 }"
@@ -256,11 +266,14 @@ const userInfo = reactive({
   bio: ''
 })
 
+const channelInfo = reactive({ channel_id: '', channel_name: '', mode: 'https' })
+const fetchingInfo = ref(false)
+
 const goBack = () => {
   router.push('/')
 }
 
-import { discoverServers, startClient } from '@/api/app'
+import { discoverServers, startClient, fetchHttpsInfo } from '@/api/app'
 
 const startScan = async () => {
   scanning.value = true
@@ -275,7 +288,8 @@ const startScan = async () => {
     }))
     message.success(`发现 ${discoveredServers.value.length} 个频道`)
   } catch (error) {
-    message.error('扫描失败: ' + (error.message || ''))
+    const scanDetail = error && error.details ? ` - ${String(error.details)}` : ''
+    message.error('扫描失败: ' + (error.message || '') + scanDetail)
   } finally {
     scanning.value = false
   }
@@ -283,7 +297,8 @@ const startScan = async () => {
 
 const selectServer = (server) => {
   selectedServer.value = server
-  showUserInfoModal.value = true
+  // 先获取频道信息
+  fetchInfo()
 }
 
 const handleManualConnect = () => {
@@ -291,13 +306,15 @@ const handleManualConnect = () => {
     ...manualConfig,
     channelName: '未知频道'
   }
-  showUserInfoModal.value = true
+  // 不直接打开用户信息弹窗，先获取频道信息
+  fetchInfo()
 }
 
 const handleJoinChannel = async () => {
   joining.value = true
   try {
     await startClient({
+      channel_id: channelInfo.channel_id,
       password: userInfo.password,
       transport_mode: manualConfig.transportMode,
       network_interface: '',
@@ -308,11 +325,41 @@ const handleJoinChannel = async () => {
       auto_reconnect: true
     })
     message.success('成功加入频道！')
+    showUserInfoModal.value = false
     router.push('/chat')
   } catch (error) {
-    message.error('加入频道失败: ' + (error.message || ''))
+    const code = error && error.code ? ` [${error.code}]` : ''
+    const detail = error && error.details ? ` - ${String(error.details)}` : ''
+    message.error(`加入频道失败${code}: ${error.message || ''}${detail}`)
   } finally {
     joining.value = false
+  }
+}
+
+const fetchInfo = async () => {
+  fetchingInfo.value = true
+  try {
+    const server = selectedServer.value?.ip || manualConfig.serverAddress
+    const port = selectedServer.value?.port || manualConfig.port
+    if (!server || !port) {
+      message.warning('请先填写服务器地址和端口')
+      return
+    }
+    const info = await fetchHttpsInfo(server, port, true, 5)
+    channelInfo.channel_id = info.channel_id || info.ChannelID || ''
+    channelInfo.channel_name = info.channel_name || info.ChannelName || ''
+    channelInfo.mode = (info.mode || info.Mode || 'https')
+    if (!channelInfo.channel_id) {
+      message.warning('未获取到频道ID，请检查服务器')
+      return
+    }
+    showUserInfoModal.value = true
+  } catch (error) {
+    const code = error && error.code ? ` [${error.code}]` : ''
+    const detail = error && error.details ? ` - ${String(error.details)}` : ''
+    message.error(`获取频道信息失败${code}: ${error.message || ''}${detail}`)
+  } finally {
+    fetchingInfo.value = false
   }
 }
 </script>

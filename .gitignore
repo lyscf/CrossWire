@@ -5,3 +5,5 @@ frontend/dist
 logs/*
 *.log
 *.db
+*.crt
+*.key

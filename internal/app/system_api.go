@@ -2,9 +2,11 @@ package app
 
 import (
 	"archive/zip"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -112,6 +114,41 @@ func (a *App) TestConnection(serverAddress string, mode models.TransportMode, ti
 	return NewSuccessResponse(result)
 }
 
+// FetchHTTPSInfo 直连服务器 /info（支持自签名）并返回频道信息
+func (a *App) FetchHTTPSInfo(server string, port int, skipTLSVerify bool, timeoutSec int) Response {
+	if server == "" || port <= 0 {
+		return NewErrorResponse("invalid_params", "服务器地址或端口无效", "")
+	}
+	if timeoutSec <= 0 {
+		timeoutSec = 5
+	}
+
+	url := fmt.Sprintf("https://%s:%d/info", server, port)
+	tr := &http.Transport{}
+	if skipTLSVerify {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client := &http.Client{Transport: tr, Timeout: time.Duration(timeoutSec) * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		// 回退尝试 http
+		url2 := fmt.Sprintf("http://%s:%d/info", server, port)
+		resp, err = client.Get(url2)
+		if err != nil {
+			return NewErrorResponse("http_error", "获取频道信息失败", err.Error())
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return NewErrorResponse("bad_status", "获取频道信息失败", fmt.Sprintf("status=%d", resp.StatusCode))
+	}
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return NewErrorResponse("decode_error", "解析频道信息失败", err.Error())
+	}
+	return NewSuccessResponse(data)
+}
+
 // GetNetworkStats 获取网络统计
 func (a *App) GetNetworkStats() Response {
 	a.mu.RLock()
@@ -201,28 +238,28 @@ func (a *App) UpdateUserProfile(profile UserProfile) Response {
 		member.Avatar = profile.Avatar
 	}
 
-    // 更新技能标签（优先使用 SkillDetails，向后兼容 Skills）
-    if len(profile.SkillDetails) > 0 {
-        skills := make(models.SkillTags, len(profile.SkillDetails))
-        for i, d := range profile.SkillDetails {
-            skills[i] = models.SkillTag{
-                Category:   d.Category,
-                Level:      d.Level,
-                Experience: d.Experience,
-                LastUsed:   time.Now(),
-            }
-        }
-        member.Skills = skills
-    } else if len(profile.Skills) > 0 {
-        skills := make(models.SkillTags, len(profile.Skills))
-        for i, skillName := range profile.Skills {
-            skills[i] = models.SkillTag{
-                Category: skillName,
-                Level:    2, // 默认中级
-            }
-        }
-        member.Skills = skills
-    }
+	// 更新技能标签（优先使用 SkillDetails，向后兼容 Skills）
+	if len(profile.SkillDetails) > 0 {
+		skills := make(models.SkillTags, len(profile.SkillDetails))
+		for i, d := range profile.SkillDetails {
+			skills[i] = models.SkillTag{
+				Category:   d.Category,
+				Level:      d.Level,
+				Experience: d.Experience,
+				LastUsed:   time.Now(),
+			}
+		}
+		member.Skills = skills
+	} else if len(profile.Skills) > 0 {
+		skills := make(models.SkillTags, len(profile.Skills))
+		for i, skillName := range profile.Skills {
+			skills[i] = models.SkillTag{
+				Category: skillName,
+				Level:    2, // 默认中级
+			}
+		}
+		member.Skills = skills
+	}
 
 	// 更新元数据（Email和Bio）
 	if member.Metadata == nil {

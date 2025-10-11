@@ -340,6 +340,12 @@ export async function getRecentChannels() {
   return unwrap(res)
 }
 
+// HTTPS: 获取服务器频道信息 (/info)
+export async function fetchHttpsInfo(server, port, skipTLSVerify = true, timeoutSec = 5) {
+  const res = await App.FetchHTTPSInfo(server, port, skipTLSVerify, timeoutSec)
+  return unwrap(res)
+}
+
 export async function exportData(exportPath, options) {
   const res = await App.ExportData(exportPath, options)
   return unwrap(res)

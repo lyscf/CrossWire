@@ -41,12 +41,15 @@ func (r *MessageRepository) GetByID(messageID string) (*models.Message, error) {
 // GetByChannelID 获取频道消息（分页）
 func (r *MessageRepository) GetByChannelID(channelID string, limit, offset int) ([]*models.Message, error) {
 	var messages []*models.Message
-	err := r.db.GetChannelDB().Where("channel_id = ? AND deleted = ?", channelID, false).
-		Order("edited_at ASC").
-		Limit(limit).
-		Offset(offset).
-		Find(&messages).Error
-	if err != nil {
+	query := r.db.GetChannelDB().Where("channel_id = ? AND deleted = ?", channelID, false).
+		// 为了分页从最新开始，按编辑时间倒序返回
+		Order("edited_at DESC")
+
+	if limit > 0 {
+		query = query.Limit(limit).Offset(offset)
+	}
+
+	if err := query.Find(&messages).Error; err != nil {
 		return nil, err
 	}
 	return messages, nil
@@ -61,7 +64,8 @@ func (r *MessageRepository) GetRecentMessages(channelID string, limit int, befor
 	}
 
 	var messages []*models.Message
-	err := query.Order("edited_at ASC").
+	// 最近消息同样按编辑时间倒序
+	err := query.Order("edited_at DESC").
 		Limit(limit).
 		Find(&messages).Error
 	if err != nil {

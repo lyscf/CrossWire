@@ -241,42 +241,63 @@ func (c *Client) Start() error {
 		return fmt.Errorf("failed to initialize transport: %w", err)
 	}
 
-	// 2. 加入频道（发送认证请求）
-	if err := c.joinChannel(); err != nil {
-		return fmt.Errorf("failed to join channel: %w", err)
+	// 2. HTTPS模式：先建立到服务器的WebSocket连接，并拉取频道信息
+	if c.config.TransportMode == models.TransportHTTPS {
+		addr := c.config.TransportConfig.ServerAddress
+		port := c.config.TransportConfig.Port
+		if addr == "" || port == 0 {
+			return fmt.Errorf("https server address/port not set")
+		}
+
+		// 连接，例如 1.2.3.4:8443 -> wss://1.2.3.4:8443/ws
+		if httpsTr, ok := c.transport.(*transport.HTTPSTransport); ok {
+			target := fmt.Sprintf("%s:%d", addr, port)
+			c.logger.Info("[Client] Connecting HTTPS transport to %s", target)
+			if err := httpsTr.Connect(target); err != nil {
+				return fmt.Errorf("failed to connect https transport: %w", err)
+			}
+			// 获取频道信息以校验/填充 ChannelID
+			// 简化：期待加入响应携带频道上下文（或后续通过 /info 获取）
+			c.logger.Info("[Client] Connected to server, channel_id=%s (may be empty before join)", c.config.ChannelID)
+		}
 	}
 
-	// 3. 启动接收管理器
+	// 3. 启动接收管理器（必须在加入前启动以接收加入响应）
 	if err := c.receiveManager.Start(); err != nil {
 		return fmt.Errorf("failed to start receive manager: %w", err)
 	}
 
-	// 4. 启动同步管理器
+	// 4. 加入频道（发送认证请求并等待响应）
+	if err := c.joinChannel(); err != nil {
+		return fmt.Errorf("failed to join channel: %w", err)
+	}
+
+	// 5. 启动同步管理器
 	if err := c.syncManager.Start(); err != nil {
 		return fmt.Errorf("failed to start sync manager: %w", err)
 	}
 
-	// 5. 启动缓存管理器
+	// 6. 启动缓存管理器
 	if err := c.cacheManager.Start(); err != nil {
 		return fmt.Errorf("failed to start cache manager: %w", err)
 	}
 
-	// 6. 启动文件管理器
+	// 7. 启动文件管理器
 	if err := c.fileManager.Start(); err != nil {
 		return fmt.Errorf("failed to start file manager: %w", err)
 	}
 
-	// 7. 启动离线队列
+	// 8. 启动离线队列
 	if err := c.offlineQueue.Start(); err != nil {
 		return fmt.Errorf("failed to start offline queue: %w", err)
 	}
 
-	// 8. 启动挑战管理器
+	// 9. 启动挑战管理器
 	if err := c.challengeManager.Start(); err != nil {
 		return fmt.Errorf("failed to start challenge manager: %w", err)
 	}
 
-	// 9. 启动心跳（状态上报）
+	// 10. 启动心跳（状态上报）
 	go c.startHeartbeat()
 
 	c.logger.Info("[Client] Client started successfully")
@@ -364,6 +385,11 @@ func (c *Client) initTransport() error {
 		tr.SetMode("client")
 	}
 
+	// 提前订阅传输层消息，避免连接早期帧在订阅前丢失
+	if err := c.transport.Subscribe(c.receiveManager.handleTransportMessage); err != nil {
+		return fmt.Errorf("failed to subscribe transport handler: %w", err)
+	}
+
 	// 文件回调：转交给 FileManager 进度/完成处理
 	_ = c.transport.OnFileReceived(func(ft *transport.FileTransfer) {
 		if ft == nil {
@@ -383,7 +409,15 @@ func (c *Client) initTransport() error {
 
 // joinChannel 加入频道
 func (c *Client) joinChannel() error {
-	c.logger.Info("[Client] Joining channel: %s", c.config.ChannelID)
+	c.logger.Info("[Client] Joining channel: %s (mode=%s)", c.config.ChannelID, c.config.TransportMode)
+	if c.config.ChannelID == "" && c.config.TransportMode == models.TransportHTTPS {
+		c.logger.Warn("[Client] ChannelID is empty before join. Make sure server /info is used to fetch it or rely on join response to set member and channel context.")
+	}
+	if c.config.TransportMode == models.TransportHTTPS {
+		addr := c.config.TransportConfig.ServerAddress
+		port := c.config.TransportConfig.Port
+		c.logger.Debug("[Client] Using HTTPS server %s:%d", addr, port)
+	}
 
 	// 生成临时的用户密钥对（用于将来支持基于X25519的频道密钥加密分发）
 	_, ephPub, _ := c.crypto.GenerateX25519KeyPair()
@@ -429,6 +463,9 @@ func (c *Client) joinChannel() error {
 	})
 
 	if err := c.transport.SendMessage(msg); err != nil {
+		// 加强客户端侧日志：打印加密前后长度与频道信息
+		c.logger.Error("[Client] Send join failed: %v | channel_id=%s plain_len=%d cipher_len=%d", err, c.config.ChannelID, len(reqJSON), len(reqData))
+		c.logger.Error("[Client] Send join request failed: %v", err)
 		return fmt.Errorf("failed to send join request: %w", err)
 	}
 
@@ -444,6 +481,7 @@ func (c *Client) joinChannel() error {
 		// 成功
 	case <-time.After(timeout):
 		c.eventBus.Unsubscribe(subID)
+		c.logger.Error("[Client] Join response timeout after %s", timeout.String())
 		return fmt.Errorf("join response timeout")
 	}
 	c.eventBus.Unsubscribe(subID)

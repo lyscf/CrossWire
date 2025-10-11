@@ -27,6 +27,8 @@ export function DownloadFile(arg1:app.DownloadFileRequest):Promise<app.Response>
 
 export function ExportData(arg1:string,arg2:app.ExportOptions):Promise<app.Response>;
 
+export function FetchHTTPSInfo(arg1:string,arg2:number,arg3:boolean,arg4:number):Promise<app.Response>;
+
 export function GetAppVersion():Promise<string>;
 
 export function GetChallenge(arg1:string):Promise<app.Response>;

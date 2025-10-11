@@ -51,10 +51,7 @@ func NewReceiveManager(client *Client) *ReceiveManager {
 func (rm *ReceiveManager) Start() error {
 	rm.client.logger.Info("[ReceiveManager] Starting receive manager...")
 
-	// 订阅传输层消息
-	if err := rm.client.transport.Subscribe(rm.handleTransportMessage); err != nil {
-		return fmt.Errorf("failed to subscribe to transport: %w", err)
-	}
+	// 订阅已由 client.initTransport 阶段完成，这里不重复订阅
 
 	// 启动清理协程
 	go rm.cleanupSeenMessages()
@@ -89,13 +86,36 @@ func (rm *ReceiveManager) handleTransportMessage(msg *transport.Message) {
 	rm.client.stats.mutex.Unlock()
 
 	// 1. 解密消息
-	decrypted, err := rm.client.crypto.DecryptMessage(msg.Payload)
-	if err != nil {
-		rm.client.logger.Warn("[ReceiveManager] Failed to decrypt message: %v", err)
-		rm.stats.mutex.Lock()
-		rm.stats.DecryptFailures++
-		rm.stats.mutex.Unlock()
-		return
+	var decrypted []byte
+	// 优先尝试解析服务器签名载荷（BroadcastManager 格式）
+	var serverSigned struct {
+		Message   []byte `json:"message"`
+		Signature []byte `json:"signature"`
+		Timestamp int64  `json:"timestamp"`
+		ServerID  string `json:"server_id"`
+	}
+	if err := json.Unmarshal(msg.Payload, &serverSigned); err == nil && len(serverSigned.Message) > 0 {
+		// 可选：此处可校验服务器签名（若已设置 server public key），当前先解密载荷
+		plain, derr := rm.client.crypto.DecryptMessage(serverSigned.Message)
+		if derr != nil {
+			rm.client.logger.Warn("[ReceiveManager] Failed to decrypt signed payload: %v", derr)
+			rm.stats.mutex.Lock()
+			rm.stats.DecryptFailures++
+			rm.stats.mutex.Unlock()
+			return
+		}
+		decrypted = plain
+	} else {
+		// 回退：旧格式，直接解密传入负载
+		plain, derr := rm.client.crypto.DecryptMessage(msg.Payload)
+		if derr != nil {
+			rm.client.logger.Warn("[ReceiveManager] Failed to decrypt message: %v", derr)
+			rm.stats.mutex.Lock()
+			rm.stats.DecryptFailures++
+			rm.stats.mutex.Unlock()
+			return
+		}
+		decrypted = plain
 	}
 
 	// 2. 根据消息类型处理
@@ -155,6 +175,12 @@ func (rm *ReceiveManager) handleJoinResponse(payload map[string]interface{}) {
 		return
 	}
 
+	// 同步更新客户端 ChannelID（若响应中提供）
+	if chID, ok := payload["channel_id"].(string); ok && chID != "" && chID != rm.client.config.ChannelID {
+		rm.client.logger.Info("[ReceiveManager] Updating client ChannelID from response: %s", chID)
+		rm.client.config.ChannelID = chID
+	}
+
 	// 提取成员信息
 	memberData, ok := payload["member"].(map[string]interface{})
 	if !ok {
@@ -182,6 +208,22 @@ func (rm *ReceiveManager) handleJoinResponse(payload map[string]interface{}) {
 	member := &models.Member{ID: memberID, ChannelID: rm.client.config.ChannelID, Nickname: "", Status: models.StatusOnline}
 	if nickname, ok := memberData["nickname"].(string); ok {
 		member.Nickname = nickname
+	}
+	// 本地持久化我的成员信息，供 GetMyInfo 使用
+	if existing, err := rm.client.memberRepo.GetByID(memberID); err == nil && existing != nil {
+		existing.Nickname = member.Nickname
+		existing.Status = models.StatusOnline
+		existing.ChannelID = rm.client.config.ChannelID
+		_ = rm.client.memberRepo.Update(existing)
+	} else {
+		// 初始化必要字段
+		if member.JoinTime.IsZero() {
+			member.JoinTime = time.Now()
+		}
+		if member.LastSeenAt.IsZero() {
+			member.LastSeenAt = time.Now()
+		}
+		_ = rm.client.memberRepo.Create(member)
 	}
 
 	// 发布加入成功事件
@@ -246,10 +288,7 @@ func (rm *ReceiveManager) handleDataMessage(data []byte) {
 	}
 
 	// 过滤掉自己发送的消息（可选）
-	if msg.SenderID == rm.client.memberID {
-		rm.client.logger.Debug("[ReceiveManager] Ignoring own message: %s", msg.ID)
-		return
-	}
+	// 不再忽略自身消息：需要本地持久化以保证发送后立即可见
 
 	// 6. 保存到数据库
 	if err := rm.client.messageRepo.Create(&msg); err != nil {
@@ -295,6 +334,10 @@ func (rm *ReceiveManager) handleControlMessage(data []byte) {
 	rm.client.logger.Debug("[ReceiveManager] Control message: %s", msgType)
 
 	switch msgType {
+	case "sync.response":
+		// 同步响应：交给 SyncManager 处理
+		rm.client.syncManager.HandleSyncResponse(data)
+
 	case "member.status":
 		// 成员状态更新
 		rm.handleMemberStatus(payload)

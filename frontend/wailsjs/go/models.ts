@@ -17,6 +17,7 @@ export namespace app {
 	    }
 	}
 	export class ClientConfig {
+	    channel_id: string;
 	    password: string;
 	    transport_mode: string;
 	    network_interface: string;
@@ -32,6 +33,7 @@ export namespace app {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.channel_id = source["channel_id"];
 	        this.password = source["password"];
 	        this.transport_mode = source["transport_mode"];
 	        this.network_interface = source["network_interface"];

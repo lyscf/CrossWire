@@ -213,5 +213,15 @@ func (a *App) emitEvent(eventType string, data interface{}) {
 		Data:      data,
 	}
 
+	// 事件转发调试日志：事件名与数据长度（若可计算）
+	size := 0
+	switch v := data.(type) {
+	case string:
+		size = len(v)
+	case []byte:
+		size = len(v)
+	}
+	a.logger.Debug("[App] emitEvent type=%s size=%d", eventType, size)
+
 	runtime.EventsEmit(a.ctx, "app:event", event)
 }

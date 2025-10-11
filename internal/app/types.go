@@ -46,6 +46,7 @@ type ServerStatus struct {
 
 // ClientConfig 客户端配置
 type ClientConfig struct {
+    ChannelID        string               `json:"channel_id"`        // 频道ID（HTTPS: 通过/info获取）
 	Password         string               `json:"password"`          // 频道密码
 	TransportMode    models.TransportMode `json:"transport_mode"`    // 传输模式
 	NetworkInterface string               `json:"network_interface"` // 网络接口（ARP模式）

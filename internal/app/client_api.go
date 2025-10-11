@@ -26,16 +26,23 @@ func (a *App) StartClientMode(config ClientConfig) Response {
 		return NewErrorResponse("invalid_config", "配置无效", err.Error())
 	}
 
-	a.logger.Info("Starting client mode")
+	a.logger.Info("Starting client mode: transport=%s, https=%s:%d, channel_id=%s", config.TransportMode, config.ServerAddress, config.Port, config.ChannelID)
 
 	// 创建客户端配置
 	clientConfig := &client.Config{
-		ChannelID:       fmt.Sprintf("%s", config.ServerAddress), // 简化：占位
+		ChannelID:       config.ChannelID,
 		ChannelPassword: config.Password,
 		Nickname:        config.Nickname,
 		Avatar:          config.Avatar,
 		TransportMode:   config.TransportMode,
-		TransportConfig: &transport.Config{Mode: config.TransportMode, Interface: config.NetworkInterface, Port: config.Port},
+		TransportConfig: &transport.Config{
+			Mode:          config.TransportMode,
+			Interface:     config.NetworkInterface,
+			Port:          config.Port,
+			Logger:        a.logger,
+			ServerAddress: config.ServerAddress,
+			SkipTLSVerify: true,
+		},
 		SyncInterval:    5 * time.Minute,
 		MaxSyncMessages: 1000,
 		CacheSize:       5000,
@@ -53,6 +60,7 @@ func (a *App) StartClientMode(config ClientConfig) Response {
 
 	// 启动客户端
 	if err := cli.Start(); err != nil {
+		a.logger.Error("Client start failed: %v", err)
 		return NewErrorResponse("start_error", "客户端启动失败", err.Error())
 	}
 
