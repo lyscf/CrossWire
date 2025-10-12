@@ -89,7 +89,12 @@ func (a *App) GetChallenges() Response {
 
 	// 转换为DTO
 	challengeDTOs := make([]*ChallengeDTO, 0, len(challenges))
+	a.logger.Info("[App] GetChallenges: loaded %d challenges (mode=%s)", len(challenges), a.mode)
 	for _, challenge := range challenges {
+		if challenge == nil {
+			continue
+		}
+		a.logger.Debug("[App] Challenge: id=%s title=%s status=%s points=%d", challenge.ID, challenge.Title, challenge.Status, challenge.Points)
 		dto := a.challengeToDTO(challenge)
 		challengeDTOs = append(challengeDTOs, dto)
 	}

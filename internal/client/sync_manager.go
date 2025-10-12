@@ -326,19 +326,44 @@ func (sm *SyncManager) processSyncMembers(membersData []interface{}) {
 			continue
 		}
 
+		// 详细调试日志：即将同步的成员信息
+		sm.client.logger.Debug(
+			"[SyncManager] Upserting member id=%s channel_id=%s nickname=%s role=%s status=%s",
+			member.ID, member.ChannelID, member.Nickname, string(member.Role), string(member.Status),
+		)
+
+		// 在写入前检查频道占位是否存在
+		if member.ChannelID == "" {
+			sm.client.logger.Warn("[SyncManager] Member %s missing channel_id; skipping", member.ID)
+			continue
+		}
+		if _, err := sm.client.channelRepo.GetByID(member.ChannelID); err != nil {
+			sm.client.logger.Warn("[SyncManager] Channel %s not found locally before member upsert; attempting to ensure initialization", member.ChannelID)
+			// 尝试确保频道初始化（占位频道 + system 成员）
+			if e2 := sm.client.db.OpenChannelDB(member.ChannelID); e2 != nil {
+				sm.client.logger.Warn("[SyncManager] Reopen channel DB %s failed: %v", member.ChannelID, e2)
+			}
+		}
+
 		// 检查是否已存在
 		existing, err := sm.client.memberRepo.GetByID(member.ID)
 		if err == nil && existing != nil {
 			// 更新
 			if err := sm.client.memberRepo.Update(&member); err != nil {
-				sm.client.logger.Warn("[SyncManager] Failed to update member: %v", err)
+				sm.client.logger.Warn("[SyncManager] Failed to update member id=%s channel_id=%s: %v", member.ID, member.ChannelID, err)
 			} else {
 				syncedCount++
 			}
 		} else {
 			// 插入
 			if err := sm.client.memberRepo.Create(&member); err != nil {
-				sm.client.logger.Warn("[SyncManager] Failed to add member: %v", err)
+				// 失败时，补充更多上下文：确认频道是否存在
+				_, chErr := sm.client.channelRepo.GetByID(member.ChannelID)
+				if chErr != nil {
+					sm.client.logger.Warn("[SyncManager] Failed to add member id=%s channel_id=%s: %v (channel missing: %v)", member.ID, member.ChannelID, err, chErr)
+				} else {
+					sm.client.logger.Warn("[SyncManager] Failed to add member id=%s channel_id=%s: %v (channel exists)", member.ID, member.ChannelID, err)
+				}
 			} else {
 				syncedCount++
 			}
@@ -373,25 +398,30 @@ func (sm *SyncManager) processSyncChallenges(challengesData []interface{}) {
 			continue
 		}
 
+		// 详细日志：入库前打印关键信息
+		sm.client.logger.Debug("[SyncManager] Upserting challenge id=%s title=%s points=%d status=%s", ch.ID, ch.Title, ch.Points, ch.Status)
+
 		// 入库（存在则更新，不存在则创建）
 		if existing, err := sm.client.challengeRepo.GetByID(ch.ID); err == nil && existing != nil {
 			ch.CreatedAt = existing.CreatedAt // 保持创建时间
 			if err := sm.client.challengeRepo.Update(&ch); err != nil {
-				sm.client.logger.Warn("[SyncManager] Failed to update challenge: %v", err)
+				sm.client.logger.Warn("[SyncManager] Failed to update challenge id=%s: %v", ch.ID, err)
 			} else {
 				// 发布更新事件
 				sm.client.eventBus.Publish(events.EventChallengeUpdated, events.NewChallengeEvent(
 					events.EventChallengeUpdated, &ch, "", sm.client.GetChannelID(), "updated", nil,
 				))
+				sm.client.logger.Debug("[SyncManager] Challenge updated id=%s", ch.ID)
 			}
 		} else {
 			if err := sm.client.challengeRepo.Create(&ch); err != nil {
-				sm.client.logger.Warn("[SyncManager] Failed to create challenge: %v", err)
+				sm.client.logger.Warn("[SyncManager] Failed to create challenge id=%s: %v", ch.ID, err)
 			} else {
 				// 发布创建事件
 				sm.client.eventBus.Publish(events.EventChallengeCreated, events.NewChallengeEvent(
 					events.EventChallengeCreated, &ch, "", sm.client.GetChannelID(), "created", nil,
 				))
+				sm.client.logger.Debug("[SyncManager] Challenge created id=%s", ch.ID)
 			}
 		}
 	}

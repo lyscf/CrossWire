@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -94,6 +95,7 @@ func (db *Database) OpenChannelDB(channelID string) error {
 	}
 
 	channelDBPath := filepath.Join(channelsDir, fmt.Sprintf("%s.db", channelID))
+	log.Printf("[DB] OpenChannelDB: channel_id=%s path=%s", channelID, channelDBPath)
 	channelDB, err := gorm.Open(sqlite.Open(channelDBPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -114,7 +116,25 @@ func (db *Database) OpenChannelDB(channelID string) error {
 	}
 
 	// 确保基础记录存在：频道占位与系统成员，避免后续外键错误
-	return db.ensureChannelInitialized(channelID)
+	if err := db.ensureChannelInitialized(channelID); err != nil {
+		return err
+	}
+
+	// 诊断：验证占位是否存在
+	var chCount int64
+	if e := db.channelDB.Model(&models.Channel{}).Where("id = ?", channelID).Count(&chCount).Error; e != nil {
+		log.Printf("[DB] Verify channel placeholder failed: id=%s err=%v", channelID, e)
+	} else {
+		log.Printf("[DB] Verify channel placeholder: id=%s count=%d", channelID, chCount)
+	}
+	var sysCount int64
+	if e := db.channelDB.Model(&models.Member{}).Where("id = ?", "system").Count(&sysCount).Error; e != nil {
+		log.Printf("[DB] Verify system member failed: err=%v", e)
+	} else {
+		log.Printf("[DB] Verify system member: count=%d", sysCount)
+	}
+
+	return nil
 }
 
 // ensureChannelInitialized 确保频道与系统成员的基础记录存在
@@ -142,8 +162,10 @@ func (db *Database) ensureChannelInitialized(channelID string) error {
 				UpdatedAt:     now,
 			}
 			if e := db.channelDB.Create(placeholder).Error; e != nil {
+				log.Printf("[DB] Create placeholder channel failed: id=%s err=%v", channelID, e)
 				return fmt.Errorf("failed to create placeholder channel: %w", e)
 			}
+			log.Printf("[DB] Created placeholder channel: id=%s", channelID)
 		} else {
 			return err
 		}
@@ -166,8 +188,10 @@ func (db *Database) ensureChannelInitialized(channelID string) error {
 				LastHeartbeat: now,
 			}
 			if e := db.channelDB.Create(sysRec).Error; e != nil {
+				log.Printf("[DB] Create system member failed: channel_id=%s err=%v", channelID, e)
 				return fmt.Errorf("failed to create system member: %w", e)
 			}
+			log.Printf("[DB] Created system member for channel: %s", channelID)
 		} else {
 			return err
 		}

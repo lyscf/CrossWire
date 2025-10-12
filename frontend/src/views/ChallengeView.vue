@@ -191,9 +191,19 @@ const handleUpdateProgress = (progress) => {
 // 加载题目列表
 const loadChallenges = async () => {
   try {
-    console.log('Loading challenges from backend...')
+    console.log('[ChallengeView] Loading challenges from backend...')
     const list = await getChallenges()
-    console.log('Loaded challenges:', list)
+    console.log('[ChallengeView] Loaded challenges count:', Array.isArray(list) ? list.length : 'N/A')
+    if (Array.isArray(list)) {
+      for (const ch of list) {
+        console.log('[ChallengeView] item:', {
+          id: ch?.id || ch?.ID,
+          title: ch?.title || ch?.Title,
+          status: ch?.status || ch?.Status,
+          points: ch?.points || ch?.Points
+        })
+      }
+    }
     
     if (Array.isArray(list)) {
       challenges.value = list.map(c => {
@@ -216,6 +226,7 @@ const loadChallenges = async () => {
           flag: c.flag || c.Flag || ''
         }
       })
+      console.log('[ChallengeView] Normalized challenges:', challenges.value)
     }
     
     if (challenges.value.length === 0) {
