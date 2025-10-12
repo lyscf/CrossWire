@@ -36,7 +36,6 @@ type ChallengeStats struct {
 	SolvedChallenges   int
 	TotalSubmissions   int
 	CorrectSubmissions int
-	mutex              sync.RWMutex
 }
 
 // NewChallengeManager 创建挑战管理器
@@ -271,6 +270,21 @@ func (cm *ChallengeManager) handleChallengeCreated(event *events.Event) {
 		go cm.syncSubChannel(challenge.SubChannelID)
 	}
 
+	// 本地持久化（存在则更新，不存在则创建）
+	if cm.client != nil && cm.client.challengeRepo != nil && challenge != nil {
+		if existing, err := cm.client.challengeRepo.GetByID(challenge.ID); err == nil && existing != nil {
+			// 保留首次创建时间
+			challenge.CreatedAt = existing.CreatedAt
+			if err := cm.client.challengeRepo.Update(challenge); err != nil {
+				cm.client.logger.Warn("[ChallengeManager] Persist challenge(update) failed: %v", err)
+			}
+		} else {
+			if err := cm.client.challengeRepo.Create(challenge); err != nil {
+				cm.client.logger.Warn("[ChallengeManager] Persist challenge(create) failed: %v", err)
+			}
+		}
+	}
+
 	cm.client.logger.Info("[ChallengeManager] New challenge created: %s (sub-channel: %s)",
 		challenge.Title, challenge.SubChannelID)
 }
@@ -312,6 +326,46 @@ func (cm *ChallengeManager) handleChallengeAssigned(event *events.Event) {
 	cm.challenges[challengeEvent.Challenge.ID] = challengeEvent.Challenge
 	cm.challengesMutex.Unlock()
 
+	// 本地持久化：更新题目并记录分配关系
+	if cm.client != nil && cm.client.challengeRepo != nil && challengeEvent.Challenge != nil {
+		// 去重追加 AssignedTo
+		assignedID := challengeEvent.UserID
+		if assignedID != "" {
+			exists := false
+			for _, id := range challengeEvent.Challenge.AssignedTo {
+				if id == assignedID {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				challengeEvent.Challenge.AssignedTo = append(challengeEvent.Challenge.AssignedTo, assignedID)
+			}
+		}
+		if existing, err := cm.client.challengeRepo.GetByID(challengeEvent.Challenge.ID); err == nil && existing != nil {
+			// 保留首次创建时间
+			challengeEvent.Challenge.CreatedAt = existing.CreatedAt
+			if err := cm.client.challengeRepo.Update(challengeEvent.Challenge); err != nil {
+				cm.client.logger.Warn("[ChallengeManager] Persist assigned(update) failed: %v", err)
+			}
+		} else {
+			if err := cm.client.challengeRepo.Create(challengeEvent.Challenge); err != nil {
+				cm.client.logger.Warn("[ChallengeManager] Persist assigned(create) failed: %v", err)
+			}
+		}
+
+		// 记录分配关系（尽力而为）
+		if assignedID != "" {
+			_ = cm.client.challengeRepo.AssignChallenge(&models.ChallengeAssignment{
+				ChallengeID: challengeEvent.Challenge.ID,
+				MemberID:    assignedID,
+				AssignedBy:  "server",
+				AssignedAt:  time.Now(),
+				Status:      "assigned",
+			})
+		}
+	}
+
 	cm.client.logger.Info("[ChallengeManager] Challenge assigned: %s", challengeEvent.Challenge.Title)
 }
 
@@ -331,6 +385,25 @@ func (cm *ChallengeManager) handleChallengeSolved(event *events.Event) {
 			challenge.SolvedBy = append(challenge.SolvedBy, challengeEvent.UserID)
 		}
 		challenge.SolvedAt = time.Now()
+		// 本地持久化更新
+		if cm.client != nil && cm.client.challengeRepo != nil {
+			if existing, err := cm.client.challengeRepo.GetByID(challenge.ID); err == nil && existing != nil {
+				challenge.CreatedAt = existing.CreatedAt
+			}
+			if err := cm.client.challengeRepo.Update(challenge); err != nil {
+				cm.client.logger.Warn("[ChallengeManager] Persist solved(update) failed: %v", err)
+			}
+			// 同步进度（100%）
+			if challengeEvent.UserID != "" {
+				_ = cm.client.challengeRepo.UpdateProgress(&models.ChallengeProgress{
+					ChallengeID: challenge.ID,
+					MemberID:    challengeEvent.UserID,
+					Status:      "solved",
+					Progress:    100,
+					UpdatedAt:   time.Now(),
+				})
+			}
+		}
 	}
 	cm.challengesMutex.Unlock()
 

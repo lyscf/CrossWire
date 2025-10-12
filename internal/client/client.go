@@ -121,7 +121,7 @@ type SignedMessage struct {
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
-		SyncInterval:    5 * time.Minute,
+		SyncInterval:    5 * time.Second,
 		MaxSyncMessages: 1000,
 		CacheSize:       5000,
 		CacheDuration:   24 * time.Hour,

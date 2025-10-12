@@ -818,19 +818,26 @@ func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64,
 	// 1. 获取消息更新
 	messages, hasMoreMessages, err := mr.getMessagesSince(lastTimestamp, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get messages: %w", err)
+		return nil, fmt.Errorf("[MessageRouter] Failed to get messages: %w", err)
 	}
 
 	// 2. 获取成员更新
 	members, err := mr.getMemberUpdates(lastTimestamp)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get members: %w", err)
+		return nil, fmt.Errorf("[MessageRouter] Failed to get members: %w", err)
+	}
+
+	// 2.5 获取挑战列表（当前频道的所有题目，作为最小可用同步）
+	challenges, err := mr.server.challengeRepo.GetByChannelID(mr.server.config.ChannelID)
+	if err != nil {
+		mr.server.logger.Warn("[MessageRouter] Failed to get challenges: %v", err)
+		challenges = nil
 	}
 
 	// 3. 获取频道信息
 	channel, err := mr.server.channelManager.GetChannel()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get channel: %w", err)
+		return nil, fmt.Errorf("[MessageRouter] Failed to get channel: %w", err)
 	}
 
 	// 4. 构造响应
@@ -839,6 +846,7 @@ func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64,
 	response["timestamp"] = time.Now().Unix()
 	response["messages"] = messages
 	response["members"] = members
+	response["challenges"] = challenges
 	response["channel"] = channel
 	response["has_more"] = hasMoreMessages
 

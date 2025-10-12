@@ -173,7 +173,7 @@ func (am *AuthManager) HandleJoinRequest(transportMsg *transport.Message) {
 	am.sessions[member.ID] = session
 	am.sessionsMutex.Unlock()
 
-	// 9. 获取成员列表
+	// 9. 获取成员列表（包含刚加入的成员）
 	members, err := am.server.channelManager.GetMembers()
 	if err != nil {
 		am.server.logger.Error("[AuthManager] Failed to get members: %v", err)
@@ -244,6 +244,17 @@ func (am *AuthManager) sendJoinResponse(to string, success bool, errorMsg string
 			"id":       memberID,
 			"nickname": nickname,
 		}
+		// 附带成员列表，便于客户端初始本地化
+		list := make([]map[string]interface{}, 0, len(response.MemberList))
+		for _, mi := range response.MemberList {
+			list = append(list, map[string]interface{}{
+				"id":       mi.ID,
+				"nickname": mi.Nickname,
+				"role":     string(mi.Role),
+				"status":   string(mi.Status),
+			})
+		}
+		resp["member_list"] = list
 	}
 
 	// 序列化并加密

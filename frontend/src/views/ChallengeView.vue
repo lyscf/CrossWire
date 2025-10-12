@@ -84,7 +84,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated, onBeforeUnmount } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import ChallengeList from '@/components/Challenge/ChallengeList.vue'
@@ -227,10 +227,27 @@ const loadChallenges = async () => {
   }
 }
 
-// 组件挂载时加载数据
+// 组件挂载与激活时加载数据
+let onWinEvt
 onMounted(async () => {
   console.log('ChallengeView mounted')
   await loadChallenges()
+  // 监听全局挑战事件，实时刷新列表
+  onWinEvt = (e) => {
+    const { type } = (e?.detail || {})
+    if (type === 'challenge:created' || type === 'challenge:updated' || type === 'challenge:assigned' || type === 'challenge:solved') {
+      loadChallenges()
+    }
+  }
+  window.addEventListener('cw:challenge:event', onWinEvt)
+})
+
+onActivated(async () => {
+  await loadChallenges()
+})
+
+onBeforeUnmount(() => {
+  if (onWinEvt) window.removeEventListener('cw:challenge:event', onWinEvt)
 })
 </script>
 

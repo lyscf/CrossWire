@@ -107,8 +107,38 @@ func (a *App) GetMyInfo() Response {
 	a.logger.Debug("[GetMyInfo] Fetching member info for ID: %s", memberID)
 	member, err := a.db.MemberRepo().GetByID(memberID)
 	if err != nil {
-		a.logger.Error("[GetMyInfo] Failed to get member info: %v", err)
-		return NewErrorResponse("not_found", "获取用户信息失败", err.Error())
+		// 容错：若本地尚未持久化，则根据当前运行上下文补充一条最小成员记录
+		a.logger.Warn("[GetMyInfo] Member not found in DB, attempting to create fallback record: %s", memberID)
+		nickname := "User"
+		if a.userProfile != nil && a.userProfile.Nickname != "" {
+			nickname = a.userProfile.Nickname
+		} else if a.mode == ModeServer {
+			nickname = "Server"
+		}
+
+		// 推断频道ID
+		channelID := ""
+		if a.mode == ModeServer && a.server != nil {
+			if ch, _ := a.server.GetChannel(); ch != nil {
+				channelID = ch.ID
+			}
+		} else if a.mode == ModeClient && a.client != nil {
+			channelID = a.client.GetChannelID()
+		}
+
+		member = &models.Member{
+			ID:         memberID,
+			ChannelID:  channelID,
+			Nickname:   nickname,
+			Status:     models.StatusOnline,
+			JoinedAt:   time.Now(),
+			LastSeenAt: time.Now(),
+		}
+		if e2 := a.db.MemberRepo().Create(member); e2 != nil {
+			a.logger.Error("[GetMyInfo] Fallback create member failed: %v", e2)
+			return NewErrorResponse("not_found", "获取用户信息失败", err.Error())
+		}
+		a.logger.Info("[GetMyInfo] Fallback member created: %s (%s)", member.ID, member.Nickname)
 	}
 
 	a.logger.Info("[GetMyInfo] Successfully retrieved member info: %s (nickname: %s, role: %s)",

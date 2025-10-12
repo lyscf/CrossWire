@@ -207,6 +207,11 @@ func (sm *SyncManager) HandleSyncResponse(data []byte) {
 		sm.processSyncMembers(membersData)
 	}
 
+	// 2.5 处理挑战（最小可用：全量覆盖/增量更新本地）
+	if challengesData, ok := response["challenges"].([]interface{}); ok {
+		sm.processSyncChallenges(challengesData)
+	}
+
 	// 3. 检查是否有更多数据
 	hasMore, _ := response["has_more"].(bool)
 	if hasMore {
@@ -345,6 +350,51 @@ func (sm *SyncManager) processSyncMembers(membersData []interface{}) {
 	sm.stats.mutex.Unlock()
 
 	sm.client.logger.Info("[SyncManager] Synced %d members", syncedCount)
+}
+
+// processSyncChallenges 处理同步的挑战数据
+func (sm *SyncManager) processSyncChallenges(challengesData []interface{}) {
+	sm.client.logger.Debug("[SyncManager] Processing %d synced challenges", len(challengesData))
+
+	for _, chData := range challengesData {
+		m, ok := chData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// 转换为JSON再反序列化
+		raw, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+		var ch models.Challenge
+		if err := json.Unmarshal(raw, &ch); err != nil {
+			sm.client.logger.Warn("[SyncManager] Failed to unmarshal challenge: %v", err)
+			continue
+		}
+
+		// 入库（存在则更新，不存在则创建）
+		if existing, err := sm.client.challengeRepo.GetByID(ch.ID); err == nil && existing != nil {
+			ch.CreatedAt = existing.CreatedAt // 保持创建时间
+			if err := sm.client.challengeRepo.Update(&ch); err != nil {
+				sm.client.logger.Warn("[SyncManager] Failed to update challenge: %v", err)
+			} else {
+				// 发布更新事件
+				sm.client.eventBus.Publish(events.EventChallengeUpdated, events.NewChallengeEvent(
+					events.EventChallengeUpdated, &ch, "", sm.client.GetChannelID(), "updated", nil,
+				))
+			}
+		} else {
+			if err := sm.client.challengeRepo.Create(&ch); err != nil {
+				sm.client.logger.Warn("[SyncManager] Failed to create challenge: %v", err)
+			} else {
+				// 发布创建事件
+				sm.client.eventBus.Publish(events.EventChallengeCreated, events.NewChallengeEvent(
+					events.EventChallengeCreated, &ch, "", sm.client.GetChannelID(), "created", nil,
+				))
+			}
+		}
+	}
 }
 
 // shouldUpdate 判断是否应该更新（冲突解决）

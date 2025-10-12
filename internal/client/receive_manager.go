@@ -235,6 +235,46 @@ func (rm *ReceiveManager) handleJoinResponse(payload map[string]interface{}) {
 		_ = rm.client.memberRepo.Create(member)
 	}
 
+	// 持久化 member_list（如果服务端提供）
+	if list, ok := payload["member_list"].([]interface{}); ok {
+		for _, it := range list {
+			if m, ok2 := it.(map[string]interface{}); ok2 {
+				mid, _ := m["id"].(string)
+				nick, _ := m["nickname"].(string)
+				roleStr, _ := m["role"].(string)
+				statusStr, _ := m["status"].(string)
+				if mid == "" {
+					continue
+				}
+				rec := &models.Member{ID: mid, ChannelID: rm.client.config.ChannelID, Nickname: nick}
+				if roleStr != "" {
+					rec.Role = models.Role(roleStr)
+				}
+				if statusStr != "" {
+					rec.Status = models.UserStatus(statusStr)
+				}
+				if exist, err := rm.client.memberRepo.GetByID(mid); err == nil && exist != nil {
+					exist.Nickname = rec.Nickname
+					if rec.Role != "" {
+						exist.Role = rec.Role
+					}
+					if rec.Status != "" {
+						exist.Status = rec.Status
+					}
+					_ = rm.client.memberRepo.Update(exist)
+				} else {
+					if rec.JoinedAt.IsZero() {
+						rec.JoinedAt = time.Now()
+					}
+					if rec.LastSeenAt.IsZero() {
+						rec.LastSeenAt = time.Now()
+					}
+					_ = rm.client.memberRepo.Create(rec)
+				}
+			}
+		}
+	}
+
 	// 发布加入成功事件
 	rm.client.eventBus.Publish(events.EventMemberJoined, &events.MemberEvent{
 		Member:    member,
@@ -265,7 +305,7 @@ func (rm *ReceiveManager) handleDataMessage(data []byte) {
 		}
 	}
 
-	// 2) 否则按普通聊天消息处理（兼容旧格式）
+	// 2) 否则按普通聊天/系统消息处理（兼容旧格式）
 	var msg models.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
 		rm.client.logger.Error("[ReceiveManager] Failed to unmarshal message: %v", err)
@@ -298,6 +338,115 @@ func (rm *ReceiveManager) handleDataMessage(data []byte) {
 
 	// 过滤掉自己发送的消息（可选）
 	// 不再忽略自身消息：需要本地持久化以保证发送后立即可见
+
+	// 5.5 识别内嵌系统事件：challenge_created / challenge_assigned / challenge_solved
+	if msg.Type == models.MessageTypeSystem {
+		if ev, ok := msg.Content["event"].(string); ok {
+			switch ev {
+			case "challenge_created":
+				// 从extra构造Challenge最小字段
+				extra, _ := msg.Content["extra"].(map[string]interface{})
+				var ch models.Challenge
+				if extra != nil {
+					ch.ID, _ = extra["challenge_id"].(string)
+					ch.ChannelID = rm.client.GetChannelID()
+					ch.SubChannelID, _ = extra["sub_channel_id"].(string)
+					ch.Title, _ = extra["title"].(string)
+					ch.Category, _ = extra["category"].(string)
+					ch.Difficulty, _ = extra["difficulty"].(string)
+					if pts, ok2 := extra["points"].(float64); ok2 {
+						ch.Points = int(pts)
+					}
+					if desc, ok2 := extra["message"].(string); ok2 {
+						ch.Description = desc
+					}
+					ch.Status = "open"
+					ch.CreatedBy = "server"
+					ch.CreatedAt = time.Now()
+					ch.UpdatedAt = time.Now()
+				}
+				if ch.ID != "" && rm.client.challengeRepo != nil {
+					if existing, err := rm.client.challengeRepo.GetByID(ch.ID); err == nil && existing != nil {
+						ch.CreatedAt = existing.CreatedAt
+						_ = rm.client.challengeRepo.Update(&ch)
+					} else {
+						_ = rm.client.challengeRepo.Create(&ch)
+					}
+					rm.client.eventBus.Publish(events.EventChallengeCreated, events.NewChallengeEvent(
+						events.EventChallengeCreated, &ch, "server", rm.client.GetChannelID(), "created", nil,
+					))
+					if ch.SubChannelID != "" {
+						go rm.client.challengeManager.syncSubChannel(ch.SubChannelID)
+					}
+				}
+			case "challenge_assigned":
+				extra, _ := msg.Content["extra"].(map[string]interface{})
+				challengeID, _ := extra["challenge_id"].(string)
+				assigneeID, _ := extra["assignee_id"].(string)
+				if challengeID != "" && rm.client.challengeRepo != nil {
+					// 更新 AssignedTo + 写入分配关系
+					ch, _ := rm.client.challengeRepo.GetByID(challengeID)
+					if ch == nil {
+						ch = &models.Challenge{ID: challengeID, ChannelID: rm.client.GetChannelID()}
+					}
+					exists := false
+					for _, id := range ch.AssignedTo {
+						if id == assigneeID {
+							exists = true
+							break
+						}
+					}
+					if assigneeID != "" && !exists {
+						ch.AssignedTo = append(ch.AssignedTo, assigneeID)
+					}
+					_ = rm.client.challengeRepo.Update(ch)
+					if assigneeID != "" {
+						_ = rm.client.challengeRepo.AssignChallenge(&models.ChallengeAssignment{
+							ChallengeID: challengeID,
+							MemberID:    assigneeID,
+							AssignedBy:  "server",
+							AssignedAt:  time.Now(),
+							Status:      "assigned",
+						})
+					}
+					rm.client.eventBus.Publish(events.EventChallengeAssigned, events.NewChallengeEvent(
+						events.EventChallengeAssigned, ch, assigneeID, rm.client.GetChannelID(), "assigned", nil,
+					))
+				}
+			case "challenge_solved":
+				extra, _ := msg.Content["extra"].(map[string]interface{})
+				challengeID, _ := extra["challenge_id"].(string)
+				solverName, _ := extra["nickname"].(string)
+				// actor_id 也可能是 memberID
+				actorID, _ := msg.Content["actor_id"].(string)
+				if challengeID != "" && rm.client.challengeRepo != nil {
+					ch, _ := rm.client.challengeRepo.GetByID(challengeID)
+					if ch == nil {
+						ch = &models.Challenge{ID: challengeID, ChannelID: rm.client.GetChannelID()}
+					}
+					if actorID != "" {
+						ch.SolvedBy = append(ch.SolvedBy, actorID)
+					}
+					ch.Status = "solved"
+					ch.SolvedAt = time.Now()
+					_ = rm.client.challengeRepo.Update(ch)
+					if actorID != "" {
+						_ = rm.client.challengeRepo.UpdateProgress(&models.ChallengeProgress{
+							ChallengeID: challengeID,
+							MemberID:    actorID,
+							Status:      "solved",
+							Progress:    100,
+							UpdatedAt:   time.Now(),
+						})
+					}
+					// 发布事件（使用 actorID 作为 UserID，solverName 仅作展示信息）
+					rm.client.eventBus.Publish(events.EventChallengeSolved, events.NewChallengeEvent(
+						events.EventChallengeSolved, ch, actorID, rm.client.GetChannelID(), "solved", map[string]string{"nickname": solverName},
+					))
+				}
+			}
+		}
+	}
 
 	// 6. 保存到数据库
 	if err := rm.client.messageRepo.Create(&msg); err != nil {
