@@ -775,8 +775,8 @@ func (mr *MessageRouter) HandleSyncRequest(transportMsg *transport.Message) {
 	mr.server.logger.Debug("[MessageRouter] Sync params: lastMessageID=%s, lastTimestamp=%d, limit=%d",
 		lastMessageID, lastTimestamp, limit)
 
-	// 5. 构建响应
-	response, err := mr.buildSyncResponse(memberID, lastTimestamp, limit)
+	// 5. 构建响应（携带 lastMessageID 以避免同秒丢失）
+	response, err := mr.buildSyncResponse(memberID, lastTimestamp, lastMessageID, limit)
 	if err != nil {
 		mr.server.logger.Error("[MessageRouter] Failed to build sync response: %v", err)
 		return
@@ -812,11 +812,11 @@ func (mr *MessageRouter) HandleSyncRequest(transportMsg *transport.Message) {
 }
 
 // buildSyncResponse 构建同步响应
-func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64, limit int) (map[string]interface{}, error) {
+func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64, lastMessageID string, limit int) (map[string]interface{}, error) {
 	response := make(map[string]interface{})
 
 	// 1. 获取消息更新
-	messages, hasMoreMessages, err := mr.getMessagesSince(lastTimestamp, limit)
+	messages, hasMoreMessages, err := mr.getMessagesSince(lastTimestamp, lastMessageID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("[MessageRouter] Failed to get messages: %w", err)
 	}
@@ -864,7 +864,7 @@ func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64,
 }
 
 // getMessagesSince 获取指定时间后的消息
-func (mr *MessageRouter) getMessagesSince(sinceTimestamp int64, limit int) ([]interface{}, bool, error) {
+func (mr *MessageRouter) getMessagesSince(sinceTimestamp int64, lastMessageID string, limit int) ([]interface{}, bool, error) {
 	// 转换时间戳
 	sinceTime := time.Unix(sinceTimestamp, 0)
 
@@ -875,10 +875,10 @@ func (mr *MessageRouter) getMessagesSince(sinceTimestamp int64, limit int) ([]in
 		return nil, false, err
 	}
 
-	// 过滤：只返回指定时间之后的消息
+	// 过滤：返回 (timestamp > since) 或 (timestamp == since 且 id > lastMessageID)
 	filteredMessages := make([]*models.Message, 0)
 	for _, msg := range allMessages {
-		if msg.Timestamp.After(sinceTime) {
+		if msg.Timestamp.After(sinceTime) || (msg.Timestamp.Equal(sinceTime) && msg.ID > lastMessageID) {
 			filteredMessages = append(filteredMessages, msg)
 		}
 	}
@@ -890,7 +890,7 @@ func (mr *MessageRouter) getMessagesSince(sinceTimestamp int64, limit int) ([]in
 
 	// 应用限制
 	hasMore := false
-	if len(filteredMessages) > limit {
+	if limit > 0 && len(filteredMessages) > limit {
 		filteredMessages = filteredMessages[:limit]
 		hasMore = true
 	}

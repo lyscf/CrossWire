@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -108,7 +109,71 @@ func (db *Database) OpenChannelDB(channelID string) error {
 	}
 
 	// 自动迁移频道数据库
-	return db.migrateChannelDB()
+	if err := db.migrateChannelDB(); err != nil {
+		return err
+	}
+
+	// 确保基础记录存在：频道占位与系统成员，避免后续外键错误
+	return db.ensureChannelInitialized(channelID)
+}
+
+// ensureChannelInitialized 确保频道与系统成员的基础记录存在
+func (db *Database) ensureChannelInitialized(channelID string) error {
+	if db.channelDB == nil {
+		return fmt.Errorf("channel database is not opened")
+	}
+
+	// 1) 确保 channels 表存在该频道占位记录
+	var ch models.Channel
+	if err := db.channelDB.Where("id = ?", channelID).First(&ch).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			now := time.Now()
+			placeholder := &models.Channel{
+				ID:            channelID,
+				Name:          "Channel " + channelID,
+				PasswordHash:  "",
+				Salt:          []byte{},
+				CreatedAt:     now,
+				CreatorID:     "system",
+				MaxMembers:    100,
+				TransportMode: models.TransportAuto,
+				EncryptionKey: []byte{},
+				KeyVersion:    1,
+				UpdatedAt:     now,
+			}
+			if e := db.channelDB.Create(placeholder).Error; e != nil {
+				return fmt.Errorf("failed to create placeholder channel: %w", e)
+			}
+		} else {
+			return err
+		}
+	}
+
+	// 2) 确保存在 system 成员（用于系统消息外键）
+	var sys models.Member
+	if err := db.channelDB.Where("id = ?", "system").First(&sys).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			now := time.Now()
+			sysRec := &models.Member{
+				ID:            "system",
+				ChannelID:     channelID,
+				Nickname:      "System",
+				Role:          models.RoleAdmin,
+				Status:        models.StatusOnline,
+				JoinTime:      now,
+				LastSeenAt:    now,
+				JoinedAt:      now,
+				LastHeartbeat: now,
+			}
+			if e := db.channelDB.Create(sysRec).Error; e != nil {
+				return fmt.Errorf("failed to create system member: %w", e)
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // configureSQLite 配置 SQLite 优化参数
