@@ -398,6 +398,11 @@ func (sm *SyncManager) processSyncChallenges(challengesData []interface{}) {
 			continue
 		}
 
+		// 确保频道ID存在（兼容旧服务端或系统消息生成的占位记录）
+		if ch.ChannelID == "" {
+			ch.ChannelID = sm.client.GetChannelID()
+		}
+
 		// 详细日志：入库前打印关键信息
 		sm.client.logger.Debug("[SyncManager] Upserting challenge id=%s title=%s points=%d status=%s", ch.ID, ch.Title, ch.Points, ch.Status)
 

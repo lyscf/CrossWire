@@ -55,6 +55,7 @@ func (cm *ChallengeManager) Start() error {
 	cm.client.eventBus.Subscribe(events.EventChallengeCreated, cm.handleChallengeCreated)
 	cm.client.eventBus.Subscribe(events.EventChallengeAssigned, cm.handleChallengeAssigned)
 	cm.client.eventBus.Subscribe(events.EventChallengeSolved, cm.handleChallengeSolved)
+	cm.client.eventBus.Subscribe(events.EventChallengeUpdated, cm.handleChallengeUpdated)
 
 	// 加载本地挑战数据
 	if err := cm.loadChallenges(); err != nil {
@@ -249,7 +250,7 @@ func (cm *ChallengeManager) GetStats() ChallengeStats {
 
 // handleChallengeCreated 处理挑战创建事件
 func (cm *ChallengeManager) handleChallengeCreated(event *events.Event) {
-	challengeEvent, ok := event.Data.(events.ChallengeEvent)
+	challengeEvent, ok := event.Data.(*events.ChallengeEvent)
 	if !ok {
 		cm.client.logger.Warn("[ChallengeManager] Invalid challenge event data")
 		return
@@ -316,7 +317,7 @@ func (cm *ChallengeManager) syncSubChannel(subChannelID string) {
 
 // handleChallengeAssigned 处理挑战分配事件
 func (cm *ChallengeManager) handleChallengeAssigned(event *events.Event) {
-	challengeEvent, ok := event.Data.(events.ChallengeEvent)
+	challengeEvent, ok := event.Data.(*events.ChallengeEvent)
 	if !ok {
 		cm.client.logger.Warn("[ChallengeManager] Invalid challenge event data")
 		return
@@ -371,7 +372,7 @@ func (cm *ChallengeManager) handleChallengeAssigned(event *events.Event) {
 
 // handleChallengeSolved 处理挑战解决事件
 func (cm *ChallengeManager) handleChallengeSolved(event *events.Event) {
-	challengeEvent, ok := event.Data.(events.ChallengeEvent)
+	challengeEvent, ok := event.Data.(*events.ChallengeEvent)
 	if !ok {
 		cm.client.logger.Warn("[ChallengeManager] Invalid challenge event data")
 		return
@@ -420,4 +421,33 @@ func (cm *ChallengeManager) handleChallengeSolved(event *events.Event) {
 	cm.statsMutex.Unlock()
 
 	cm.client.logger.Info("[ChallengeManager] Challenge solved: %s", challengeEvent.Challenge.Title)
+}
+
+// handleChallengeUpdated 处理挑战更新事件
+func (cm *ChallengeManager) handleChallengeUpdated(event *events.Event) {
+	challengeEvent, ok := event.Data.(*events.ChallengeEvent)
+	if !ok {
+		cm.client.logger.Warn("[ChallengeManager] Invalid challenge event data")
+		return
+	}
+
+	ch := challengeEvent.Challenge
+	if ch == nil {
+		return
+	}
+
+	// 更新内存缓存
+	cm.challengesMutex.Lock()
+	cm.challenges[ch.ID] = ch
+	cm.challengesMutex.Unlock()
+
+	// 本地持久化（存在则保留首次创建时间）
+	if cm.client != nil && cm.client.challengeRepo != nil {
+		if existing, err := cm.client.challengeRepo.GetByID(ch.ID); err == nil && existing != nil {
+			ch.CreatedAt = existing.CreatedAt
+		}
+		if err := cm.client.challengeRepo.Update(ch); err != nil {
+			cm.client.logger.Warn("[ChallengeManager] Persist challenge(update) failed: %v", err)
+		}
+	}
 }
