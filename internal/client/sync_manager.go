@@ -412,20 +412,28 @@ func (sm *SyncManager) processSyncChallenges(challengesData []interface{}) {
 			if err := sm.client.challengeRepo.Update(&ch); err != nil {
 				sm.client.logger.Warn("[SyncManager] Failed to update challenge id=%s: %v", ch.ID, err)
 			} else {
-				// 发布更新事件
-				sm.client.eventBus.Publish(events.EventChallengeUpdated, events.NewChallengeEvent(
-					events.EventChallengeUpdated, &ch, "", sm.client.GetChannelID(), "updated", nil,
-				))
+				// 发布更新事件（直接使用 ChallengeEvent 作为数据）
+				sm.client.eventBus.Publish(events.EventChallengeUpdated, &events.ChallengeEvent{
+					Challenge: &ch,
+					Action:    "updated",
+					UserID:    "",
+					ChannelID: sm.client.GetChannelID(),
+					ExtraData: nil,
+				})
 				sm.client.logger.Debug("[SyncManager] Challenge updated id=%s", ch.ID)
 			}
 		} else {
 			if err := sm.client.challengeRepo.Create(&ch); err != nil {
 				sm.client.logger.Warn("[SyncManager] Failed to create challenge id=%s: %v", ch.ID, err)
 			} else {
-				// 发布创建事件
-				sm.client.eventBus.Publish(events.EventChallengeCreated, events.NewChallengeEvent(
-					events.EventChallengeCreated, &ch, "", sm.client.GetChannelID(), "created", nil,
-				))
+				// 发布创建事件（直接使用 ChallengeEvent 作为数据）
+				sm.client.eventBus.Publish(events.EventChallengeCreated, &events.ChallengeEvent{
+					Challenge: &ch,
+					Action:    "created",
+					UserID:    "",
+					ChannelID: sm.client.GetChannelID(),
+					ExtraData: nil,
+				})
 				sm.client.logger.Debug("[SyncManager] Challenge created id=%s", ch.ID)
 			}
 		}

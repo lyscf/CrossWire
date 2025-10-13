@@ -372,9 +372,13 @@ func (rm *ReceiveManager) handleDataMessage(data []byte) {
 					} else {
 						_ = rm.client.challengeRepo.Create(&ch)
 					}
-					rm.client.eventBus.Publish(events.EventChallengeCreated, events.NewChallengeEvent(
-						events.EventChallengeCreated, &ch, "server", rm.client.GetChannelID(), "created", nil,
-					))
+					rm.client.eventBus.Publish(events.EventChallengeCreated, &events.ChallengeEvent{
+						Challenge: &ch,
+						Action:    "created",
+						UserID:    "server",
+						ChannelID: rm.client.GetChannelID(),
+						ExtraData: nil,
+					})
 					if ch.SubChannelID != "" {
 						go rm.client.challengeManager.syncSubChannel(ch.SubChannelID)
 					}
@@ -409,9 +413,13 @@ func (rm *ReceiveManager) handleDataMessage(data []byte) {
 							Status:      "assigned",
 						})
 					}
-					rm.client.eventBus.Publish(events.EventChallengeAssigned, events.NewChallengeEvent(
-						events.EventChallengeAssigned, ch, assigneeID, rm.client.GetChannelID(), "assigned", nil,
-					))
+					rm.client.eventBus.Publish(events.EventChallengeAssigned, &events.ChallengeEvent{
+						Challenge: ch,
+						Action:    "assigned",
+						UserID:    assigneeID,
+						ChannelID: rm.client.GetChannelID(),
+						ExtraData: nil,
+					})
 				}
 			case "challenge_solved":
 				extra, _ := msg.Content["extra"].(map[string]interface{})
@@ -440,9 +448,13 @@ func (rm *ReceiveManager) handleDataMessage(data []byte) {
 						})
 					}
 					// 发布事件（使用 actorID 作为 UserID，solverName 仅作展示信息）
-					rm.client.eventBus.Publish(events.EventChallengeSolved, events.NewChallengeEvent(
-						events.EventChallengeSolved, ch, actorID, rm.client.GetChannelID(), "solved", map[string]string{"nickname": solverName},
-					))
+					rm.client.eventBus.Publish(events.EventChallengeSolved, &events.ChallengeEvent{
+						Challenge: ch,
+						Action:    "solved",
+						UserID:    actorID,
+						ChannelID: rm.client.GetChannelID(),
+						ExtraData: map[string]string{"nickname": solverName},
+					})
 				}
 			}
 		}
