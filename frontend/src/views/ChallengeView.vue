@@ -133,14 +133,12 @@ const handleSelectChallenge = (id) => {
 const handleChallengeCreated = async (challenge) => {
   try {
     console.log('Creating challenge:', challenge)
-    await createChallenge(challenge)
+    // 前端弹窗已直接调用 createChallenge；此处仅刷新
     message.success('题目创建成功')
-    // 重新加载题目列表
     await loadChallenges()
     showCreateModal.value = false
   } catch (e) {
-    console.error('Failed to create challenge:', e)
-    message.error('题目创建失败: ' + (e.message || '未知错误'))
+    console.error('Failed after create:', e)
   }
 }
 

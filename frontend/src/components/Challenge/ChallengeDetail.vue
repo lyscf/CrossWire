@@ -46,7 +46,7 @@
             <a-tag :color="challenge.isSolved ? 'success' : 'default'">
               {{ challenge.isSolved ? '已解出' : '未解出' }}
             </a-tag>
-            <template v-if="challenge.isSolved">
+            <template v-if="displayFlag">
               <span>Flag:</span>
               <code class="flag-code">{{ displayFlag }}</code>
               <a-button size="small" @click="copyFlag">复制</a-button>
