@@ -12,7 +12,7 @@
       >
         <div class="channel-header">
           <h3 v-if="!collapsed" class="channel-title">
-            {{ channelName }}
+            {{ currentChannelLabel }}
           </h3>
           <MenuFoldOutlined
             v-if="!collapsed"
@@ -153,6 +153,7 @@
 
 <script setup>
 import { ref, reactive, h, onMounted, onUnmounted, computed } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 // 事件由 App.vue 全局转发，这里监听 window 事件
@@ -176,6 +177,7 @@ import UserProfile from '@/components/UserProfile.vue'
 import Settings from '@/components/Settings.vue'
 import { useMemberStore } from '@/stores/member'
 import { useChannelStore } from '@/stores/channel'
+import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 const route = useRoute()
@@ -184,17 +186,19 @@ const memberDrawerVisible = ref(false)
 const fileManagerVisible = ref(false)
 const userProfileVisible = ref(false)
 const settingsVisible = ref(false)
-const channelName = ref('CTF-Team-2025')
 
 // 使用统一的频道状态管理
 const channelStore = useChannelStore()
 const memberStore = useMemberStore()
+const appStore = useAppStore()
+const currentUser = appStore.currentUser
 
 // 当前选中的频道ID和标签
-const currentChannelID = computed(() => channelStore.selectedChannelId)
+const { selectedChannelId, selectedChannel } = storeToRefs(channelStore)
+const currentChannelID = selectedChannelId
 const currentChannelLabel = computed(() => {
-  const channel = channelStore.selectedChannel
-  return channel ? channel.name : '未知频道'
+  const ch = selectedChannel.value
+  return ch ? ch.name : '未知频道'
 })
 
 // 真实数据（从后端加载）
@@ -310,16 +314,7 @@ onMounted(async () => {
       }))
     }
     
-    if (messages.value.length === 0) {
-      console.log('No messages found, showing welcome message')
-      // 如果没有消息，显示欢迎消息
-      messages.value.push({
-        id: 'welcome',
-        type: 'system',
-        content: '欢迎来到 ' + channelName.value + ' 频道！',
-        timestamp: new Date()
-      })
-    }
+    // 若无消息，保持为空，不注入预设内容
   } catch (e) {
     console.error('Failed to load messages:', e)
     message.warning('消息加载失败，显示本地消息')

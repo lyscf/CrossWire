@@ -150,7 +150,7 @@ func (db *Database) ensureChannelInitialized(channelID string) error {
 			now := time.Now()
 			placeholder := &models.Channel{
 				ID:            channelID,
-				Name:          "Channel " + channelID,
+				Name:          channelID,
 				PasswordHash:  "",
 				Salt:          []byte{},
 				CreatedAt:     now,

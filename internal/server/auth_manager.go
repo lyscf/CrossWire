@@ -193,7 +193,7 @@ func (am *AuthManager) HandleJoinRequest(transportMsg *transport.Message) {
 	// 10. 构造响应
 	response := &JoinResponse{
 		Success:         true,
-		Message:         "Welcome to the channel!",
+		Message:         "",
 		ChannelKey:      am.server.crypto.GetChannelKey(),
 		ChannelID:       am.server.config.ChannelID,
 		MemberID:        member.ID,
