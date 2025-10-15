@@ -72,6 +72,7 @@ const (
 	EventChallengeSolved    EventType = "challenge:solved"    // 题目完成
 	EventChallengeProgress  EventType = "challenge:progress"  // 题目进度更新
 	EventChallengeUpdated   EventType = "challenge:updated"   // 题目更新
+	EventChallengeDeleted   EventType = "challenge:deleted"   // 题目删除
 )
 
 // Event 事件
@@ -529,11 +530,3 @@ func (eb *EventBus) Close() error {
 func generateSubscriptionID() string {
 	return fmt.Sprintf("sub_%d", time.Now().UnixNano())
 }
-
-// TODO: 实现以下功能
-// - 事件持久化（可选）
-// - 事件重播
-// - 优先级队列
-// - 事件过滤器DSL
-// - 事件链追踪
-// - 性能监控

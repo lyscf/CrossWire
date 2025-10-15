@@ -6,18 +6,19 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/mdns"
+	"github.com/miekg/dns"
 )
 
-// MDNSTransport mDNS传输层实现（服务器签名广播模式）
+// MDNSTransport mDNS传输层实现（纯宣告包模式）
+// 使用DNS Response包（Announcement）进行所有通信
 // 参考: docs/PROTOCOL.md - 4. mDNS传输协议
 type MDNSTransport struct {
 	config *Config
@@ -26,13 +27,13 @@ type MDNSTransport struct {
 	// UDP连接
 	conn *net.UDPConn
 
-	// mDNS服务器
+	// mDNS服务器（仅用于服务发现）
 	mdnsServer *mdns.Server
 
 	// 服务器信息
 	serverAddr    *net.UDPAddr
-	serverPubKey  []byte // Ed25519公钥（客户端验证签名用）
-	serverPrivKey []byte // Ed25519私钥（服务端签名用）
+	serverPubKey  []byte // Ed25519公钥（验证签名用）
+	serverPrivKey []byte // Ed25519私钥（签名用）
 
 	// 加密
 	channelKey []byte // AES-256密钥
@@ -40,6 +41,8 @@ type MDNSTransport struct {
 	// 频道信息
 	channelID   string
 	channelName string
+	hostname    string // 本机主机名
+	localIP     net.IP // 本机IP
 
 	// 消息处理
 	handler     MessageHandler
@@ -62,7 +65,7 @@ type MDNSTransport struct {
 	started   bool
 	connected bool
 
-	// mDNS监听
+	// mDNS监听（仅用于服务发现）
 	entriesCh chan *mdns.ServiceEntry
 	closeCh   chan struct{}
 }
@@ -123,10 +126,14 @@ func (t *MDNSTransport) Start() error {
 		return fmt.Errorf("transport not initialized")
 	}
 
-	// 创建UDP连接
+	// 初始化本机信息
+	t.localIP = t.getLocalIP()
+	t.hostname = fmt.Sprintf("crosswire-%s", generateShortID())
+
+	// 创建UDP连接（监听5353端口）
 	addr := &net.UDPAddr{
 		IP:   net.IPv4zero,
-		Port: 0, // 随机端口
+		Port: 5353,
 	}
 	conn, err := net.ListenUDP("udp4", addr)
 	if err != nil {
@@ -136,21 +143,20 @@ func (t *MDNSTransport) Start() error {
 
 	t.started = true
 
-	// 服务端模式：注册mDNS服务和启动接收循环
+	// 服务端模式：注册mDNS服务发现
 	if t.mode == "server" {
 		if err := t.startServer(); err != nil {
 			return err
 		}
-		go t.receiveFromClients()
 	}
 
-	// 启动消息监听（客户端和服务端都需要）
-	go t.listenMessages()
+	// 启动宣告包接收循环（客户端和服务端都需要）
+	go t.receiveAnnouncements()
 
 	// 启动清理协程
 	go t.cleanupLoop()
 
-	fmt.Printf("mDNS transport started in %s mode\n", t.mode)
+	fmt.Printf("mDNS transport started in %s mode (IP: %s)\n", t.mode, t.localIP)
 	return nil
 }
 
@@ -262,34 +268,50 @@ func (t *MDNSTransport) IsConnected() bool {
 
 // ===== 消息收发 =====
 
-// SendMessage 发送消息
+// SendMessage 发送消息（纯宣告包模式）
 // 参考: docs/PROTOCOL.md - 4.3 消息传输流程
 func (t *MDNSTransport) SendMessage(msg *Message) error {
 	if t.mode == "server" {
-		// 服务器模式：签名并通过mDNS广播
-		return t.signAndBroadcastViaMDNS(msg)
+		// 服务器模式：多播宣告给所有客户端
+		return t.sendAnnouncement(msg, true)
 	} else {
-		// 客户端模式：UDP单播给服务器
-		return t.sendToServer(msg)
+		// 客户端模式：广播宣告（因为可能不知道服务器地址）
+		return t.sendAnnouncement(msg, true)
 	}
 }
 
-// sendToServer 客户端单播给服务器
-// 参考: docs/PROTOCOL.md - 4.3.1 客户端发送消息
-func (t *MDNSTransport) sendToServer(msg *Message) error {
-	if !t.connected {
-		return fmt.Errorf("not connected to server")
+// sendAnnouncement 发送宣告包（核心方法）
+func (t *MDNSTransport) sendAnnouncement(msg *Message, multicast bool) error {
+	// 创建宣告包
+	announcement := t.createAnnouncementPacket(msg.Payload)
+
+	// 序列化
+	packet, err := announcement.Pack()
+	if err != nil {
+		return fmt.Errorf("failed to pack announcement: %w", err)
 	}
 
-	// 发送加密的消息载荷
-	_, err := t.conn.WriteToUDP(msg.Payload, t.serverAddr)
+	// 发送
+	var targetAddr *net.UDPAddr
+	if multicast {
+		// 多播到 224.0.0.251:5353
+		targetAddr, _ = net.ResolveUDPAddr("udp4", "224.0.0.251:5353")
+	} else if t.serverAddr != nil {
+		// 单播到服务器
+		targetAddr = t.serverAddr
+	} else {
+		// 默认多播
+		targetAddr, _ = net.ResolveUDPAddr("udp4", "224.0.0.251:5353")
+	}
+
+	_, err = t.conn.WriteToUDP(packet, targetAddr)
 	if err != nil {
-		return fmt.Errorf("failed to send to server: %w", err)
+		return fmt.Errorf("failed to send announcement: %w", err)
 	}
 
 	// 更新统计
 	t.statsMu.Lock()
-	t.stats.BytesSent += uint64(len(msg.Payload))
+	t.stats.BytesSent += uint64(len(packet))
 	t.stats.MessagesSent++
 	t.stats.LastActivity = time.Now()
 	t.statsMu.Unlock()
@@ -297,10 +319,128 @@ func (t *MDNSTransport) sendToServer(msg *Message) error {
 	return nil
 }
 
-// receiveFromClients 服务器接收客户端消息
-// 参考: docs/PROTOCOL.md - 4.3.2 服务器处理与签名
-func (t *MDNSTransport) receiveFromClients() {
-	buf := make([]byte, 4096)
+// createAnnouncementPacket 创建宣告包
+func (t *MDNSTransport) createAnnouncementPacket(data []byte) *dns.Msg {
+	msg := new(dns.Msg)
+	msg.Response = true      // QR=1 (Response)
+	msg.Authoritative = true // AA=1 (Authoritative)
+	msg.RecursionDesired = false
+
+	msgID := generateMessageID()
+	serviceName := fmt.Sprintf("%s.msg._crosswire._tcp.local.", msgID)
+
+	// 1. PTR记录（服务类型）
+	ptr := &dns.PTR{
+		Hdr: dns.RR_Header{
+			Name:   "_crosswire._tcp.local.",
+			Rrtype: dns.TypePTR,
+			Class:  dns.ClassINET,
+			Ttl:    10, // 短TTL，消息快速过期
+		},
+		Ptr: serviceName,
+	}
+	msg.Answer = append(msg.Answer, ptr)
+
+	// 2. SRV记录（发送者信息）
+	srv := &dns.SRV{
+		Hdr: dns.RR_Header{
+			Name:   serviceName,
+			Rrtype: dns.TypeSRV,
+			Class:  dns.ClassINET,
+			Ttl:    10,
+		},
+		Priority: 0,
+		Weight:   0,
+		Port:     5353,
+		Target:   dns.Fqdn(t.hostname + ".local"),
+	}
+	msg.Answer = append(msg.Answer, srv)
+
+	// 3. A记录（发送者IP）
+	a := &dns.A{
+		Hdr: dns.RR_Header{
+			Name:   dns.Fqdn(t.hostname + ".local"),
+			Rrtype: dns.TypeA,
+			Class:  dns.ClassINET,
+			Ttl:    10,
+		},
+		A: t.localIP,
+	}
+	msg.Answer = append(msg.Answer, a)
+
+	// 4. TXT记录-元数据
+	metaTXT := &dns.TXT{
+		Hdr: dns.RR_Header{
+			Name:   serviceName,
+			Rrtype: dns.TypeTXT,
+			Class:  dns.ClassINET,
+			Ttl:    10,
+		},
+		Txt: []string{
+			"version=1.0",
+			fmt.Sprintf("msgid=%s", msgID),
+			fmt.Sprintf("ts=%d", time.Now().Unix()),
+			fmt.Sprintf("size=%d", len(data)),
+		},
+	}
+	msg.Answer = append(msg.Answer, metaTXT)
+
+	// 5-N. TXT记录-数据载荷
+	chunks := chunkData(data, 240) // 每块240字节
+	for i, chunk := range chunks {
+		dataTXT := &dns.TXT{
+			Hdr: dns.RR_Header{
+				Name:   dns.Fqdn(fmt.Sprintf("data%d.%s.local", i, msgID)),
+				Rrtype: dns.TypeTXT,
+				Class:  dns.ClassINET,
+				Ttl:    10,
+			},
+			Txt: []string{base64.StdEncoding.EncodeToString(chunk)},
+		}
+		msg.Answer = append(msg.Answer, dataTXT)
+	}
+
+	// 添加签名（如果有私钥）
+	if len(t.serverPrivKey) == ed25519.PrivateKeySize {
+		t.addSignature(msg)
+	}
+
+	return msg
+}
+
+// addSignature 添加签名到宣告包
+func (t *MDNSTransport) addSignature(msg *dns.Msg) {
+	// 计算Answer Section的哈希
+	var data []byte
+	for _, rr := range msg.Answer {
+		// 将RR序列化为字符串
+		rrStr := rr.String()
+		data = append(data, []byte(rrStr)...)
+	}
+	hash := sha256.Sum256(data)
+
+	// Ed25519签名
+	signature := ed25519.Sign(ed25519.PrivateKey(t.serverPrivKey), hash[:])
+
+	// 添加签名记录到Additional Section
+	sigTXT := &dns.TXT{
+		Hdr: dns.RR_Header{
+			Name:   "_sig.local.",
+			Rrtype: dns.TypeTXT,
+			Class:  dns.ClassINET,
+			Ttl:    0,
+		},
+		Txt: []string{
+			fmt.Sprintf("sig=%s", base64.StdEncoding.EncodeToString(signature)),
+			fmt.Sprintf("ts=%d", time.Now().Unix()),
+		},
+	}
+	msg.Extra = append(msg.Extra, sigTXT)
+}
+
+// receiveAnnouncements 接收宣告包
+func (t *MDNSTransport) receiveAnnouncements() {
+	buf := make([]byte, 2048)
 
 	for {
 		select {
@@ -309,16 +449,46 @@ func (t *MDNSTransport) receiveFromClients() {
 		default:
 		}
 
-		n, clientAddr, err := t.conn.ReadFromUDP(buf)
+		n, addr, err := t.conn.ReadFromUDP(buf)
 		if err != nil {
 			continue
 		}
 
-		// 构造消息
-		msg := &Message{
-			Payload:    buf[:n],
-			Timestamp:  time.Now(),
-			SenderAddr: clientAddr.String(),
+		// 解析DNS消息
+		msg := new(dns.Msg)
+		if err := msg.Unpack(buf[:n]); err != nil {
+			continue
+		}
+
+		// 只处理响应包（宣告包）
+		if !msg.Response {
+			continue
+		}
+
+		// 过滤非CrossWire宣告
+		if !t.isCrossWireAnnouncement(msg) {
+			continue
+		}
+
+		// 提取数据
+		data, metadata := t.extractDataFromAnnouncement(msg)
+		if len(data) == 0 {
+			continue
+		}
+
+		// 检查是否已处理（防重放）
+		msgID := metadata["msgid"]
+		if t.hasSeenMessage(msgID) {
+			continue
+		}
+		t.markMessageAsSeen(msgID)
+
+		// 验证签名
+		if len(t.serverPubKey) == ed25519.PublicKeySize {
+			if !t.verifySignature(msg) {
+				fmt.Println("Invalid signature, possible attack!")
+				continue
+			}
 		}
 
 		// 更新统计
@@ -328,226 +498,103 @@ func (t *MDNSTransport) receiveFromClients() {
 		t.stats.LastActivity = time.Now()
 		t.statsMu.Unlock()
 
-		// 调用处理函数（应该由Server层验证权限并调用signAndBroadcastViaMDNS）
+		// 构造消息
+		message := &Message{
+			Payload:    data,
+			SenderAddr: addr.String(),
+			Timestamp:  time.Now(),
+		}
+
+		// 调用处理函数
 		if t.handler != nil {
-			go t.handler(msg)
+			go t.handler(message)
 		}
 	}
 }
 
-// signAndBroadcastViaMDNS 服务器签名并通过mDNS广播
-// 参考: docs/PROTOCOL.md - 4.3.3 服务实例名编码
-func (t *MDNSTransport) signAndBroadcastViaMDNS(msg *Message) error {
-	if t.mode != "server" {
-		return fmt.Errorf("only server can broadcast via mDNS")
-	}
-
-	// 使用Ed25519签名
-	if len(t.serverPrivKey) != ed25519.PrivateKeySize {
-		return fmt.Errorf("server private key not set or invalid length")
-	}
-	signature := ed25519.Sign(ed25519.PrivateKey(t.serverPrivKey), msg.Payload)
-
-	// 构造签名载荷
-	signedPayload := &SignedPayload{
-		Message:   msg.Payload,
-		Signature: signature,
-		Timestamp: time.Now().UnixNano(),
-	}
-
-	payloadBytes, err := json.Marshal(signedPayload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal signed payload: %w", err)
-	}
-
-	// Base64URL编码
-	encoded := base64.URLEncoding.EncodeToString(payloadBytes)
-
-	// 分块（DNS标签最大63字符，我们用50保守）
-	const chunkSize = 50
-	chunks := splitIntoChunks(encoded, chunkSize)
-
-	// 为每个块注册mDNS服务
-	msgIDShort := msg.ID
-	if msgIDShort == "" {
-		sum := sha256.Sum256(append(msg.Payload, byte(time.Now().UnixNano())))
-		msgIDShort = hex.EncodeToString(sum[:])
-	}
-	if len(msgIDShort) > 6 {
-		msgIDShort = msgIDShort[:6]
-	}
-
-	for i, chunk := range chunks {
-		instanceName := fmt.Sprintf("%s-%03d-%s", msgIDShort, i, chunk)
-
-		info := &mdns.MDNSService{
-			Instance: instanceName,
-			Service:  "_crosswire-msg._udp",
-			Domain:   "local",
-			Port:     0,
-			TXT: []string{
-				fmt.Sprintf("total=%d", len(chunks)),
-			},
-		}
-
-		// 创建mDNS服务实例
-		server, err := mdns.NewMDNSService(
-			info.Instance,
-			info.Service,
-			info.Domain,
-			info.HostName,
-			info.Port,
-			nil,
-			info.TXT,
-		)
-		if err != nil {
-			continue
-		}
-
-		// 注册服务（5秒后自动注销）
-		mdnsServer, err := mdns.NewServer(&mdns.Config{Zone: server})
-		if err != nil {
-			continue
-		}
-
-		// 自动清理
-		time.AfterFunc(5*time.Second, func() {
-			_ = mdnsServer.Shutdown()
-		})
-	}
-
-	return nil
-}
-
-// listenMessages 监听mDNS消息服务
-// 参考: docs/PROTOCOL.md - 4.3.4 客户端接收与验证签名
-func (t *MDNSTransport) listenMessages() {
-	// 持续查询消息服务
-	go func() {
-		for {
-			select {
-			case <-t.ctx.Done():
-				return
-			default:
+// isCrossWireAnnouncement 判断是否是CrossWire宣告
+func (t *MDNSTransport) isCrossWireAnnouncement(msg *dns.Msg) bool {
+	for _, rr := range msg.Answer {
+		if ptr, ok := rr.(*dns.PTR); ok {
+			if strings.Contains(ptr.Hdr.Name, "_crosswire") {
+				return true
 			}
+		}
+	}
+	return false
+}
 
-			// 查询消息服务
-			params := &mdns.QueryParam{
-				Service:             "_crosswire-msg._udp",
-				Domain:              "local",
-				Timeout:             1 * time.Second,
-				Entries:             t.entriesCh,
-				WantUnicastResponse: false,
+// extractDataFromAnnouncement 从宣告包提取数据
+func (t *MDNSTransport) extractDataFromAnnouncement(msg *dns.Msg) ([]byte, map[string]string) {
+	metadata := make(map[string]string)
+	var dataChunks []string
+
+	for _, rr := range msg.Answer {
+		if txt, ok := rr.(*dns.TXT); ok {
+			// 判断是元数据还是数据
+			if strings.Contains(txt.Hdr.Name, "data") {
+				// 数据块
+				if len(txt.Txt) > 0 {
+					dataChunks = append(dataChunks, txt.Txt[0])
+				}
+			} else {
+				// 元数据
+				for _, field := range txt.Txt {
+					parts := strings.SplitN(field, "=", 2)
+					if len(parts) == 2 {
+						metadata[parts[0]] = parts[1]
+					}
+				}
 			}
-
-			mdns.Query(params)
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
-
-	// 处理接收到的服务实例
-	for {
-		select {
-		case <-t.ctx.Done():
-			return
-		case <-t.closeCh:
-			return
-		case entry := <-t.entriesCh:
-			t.handleMessageEntry(entry)
 		}
 	}
+
+	// 重组数据
+	var allData []byte
+	for _, chunk := range dataChunks {
+		decoded, _ := base64.StdEncoding.DecodeString(chunk)
+		allData = append(allData, decoded...)
+	}
+
+	return allData, metadata
 }
 
-// handleMessageEntry 处理mDNS消息服务实例
-func (t *MDNSTransport) handleMessageEntry(entry *mdns.ServiceEntry) {
-	if entry == nil {
-		return
-	}
+// verifySignature 验证签名
+func (t *MDNSTransport) verifySignature(msg *dns.Msg) bool {
+	// 提取签名
+	var signature []byte
+	var timestamp int64
 
-	// 解析服务实例名: <msgid>-<seq>-<data>
-	parts := strings.Split(entry.Name, "-")
-	if len(parts) < 3 {
-		return
-	}
-
-	msgID := parts[0]
-	seq, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return
-	}
-	data := strings.Join(parts[2:], "-") // 数据可能包含"-"
-
-	// 获取总分块数
-	var total int
-	for _, txt := range entry.InfoFields {
-		if strings.HasPrefix(txt, "total=") {
-			fmt.Sscanf(txt, "total=%d", &total)
-			break
+	for _, rr := range msg.Extra {
+		if txt, ok := rr.(*dns.TXT); ok {
+			if txt.Hdr.Name == "_sig.local." {
+				for _, field := range txt.Txt {
+					if strings.HasPrefix(field, "sig=") {
+						sig, _ := base64.StdEncoding.DecodeString(field[4:])
+						signature = sig
+					} else if strings.HasPrefix(field, "ts=") {
+						fmt.Sscanf(field, "ts=%d", &timestamp)
+					}
+				}
+			}
 		}
 	}
 
-	// 添加到重组器
-	if assembled := t.assembler.AddChunk(msgID, seq, data, total); assembled != "" {
-		// 重组完成，验证并处理
-		t.verifyAndProcess(assembled)
-	}
-}
-
-// verifyAndProcess 验证签名并处理消息
-func (t *MDNSTransport) verifyAndProcess(encodedPayload string) {
-	// Base64URL解码
-	payloadBytes, err := base64.URLEncoding.DecodeString(encodedPayload)
-	if err != nil {
-		return
+	// 验证时间戳
+	if time.Now().Unix()-timestamp > 300 {
+		return false // 超过5分钟
 	}
 
-	// 反序列化签名载荷
-	var signedPayload SignedPayload
-	if err := json.Unmarshal(payloadBytes, &signedPayload); err != nil {
-		return
+	// 计算哈希（与签名时使用相同方法）
+	var data []byte
+	for _, rr := range msg.Answer {
+		rrStr := rr.String()
+		data = append(data, []byte(rrStr)...)
 	}
+	hash := sha256.Sum256(data)
 
-	// 验证服务器签名（如果已设置服务器公钥）
-	if len(t.serverPubKey) == ed25519.PublicKeySize {
-		if !ed25519.Verify(ed25519.PublicKey(t.serverPubKey), signedPayload.Message, signedPayload.Signature) {
-			fmt.Println("Invalid signature, possible attack!")
-			return
-		}
-	}
-
-	// 验证时间戳（防重放）
-	if !t.validateTimestamp(signedPayload.Timestamp) {
-		fmt.Println("Message too old, possible replay attack")
-		return
-	}
-
-	// 检查是否已处理
-	msgID := fmt.Sprintf("%d", signedPayload.Timestamp)
-	if t.hasSeenMessage(msgID) {
-		return
-	}
-	t.markMessageAsSeen(msgID)
-
-	// 构造消息
-	msg := &Message{
-		Payload:   signedPayload.Message,
-		Timestamp: time.Unix(0, signedPayload.Timestamp),
-	}
-
-	// 文件回调（如果负载是传输文件）。同时触发重组缓存，当收齐时由上层再次回调完整文件。
-	if t.fileHandler != nil {
-		if ft := tryParseTransportFilePayload(signedPayload.Message); ft != nil {
-			go func() {
-				t.fileHandler(ft)
-				handleFileChunk(ft)
-			}()
-		}
-	}
-
-	// 调用处理函数
-	if t.handler != nil {
-		go t.handler(msg)
-	}
+	// 验证签名
+	return ed25519.Verify(ed25519.PublicKey(t.serverPubKey), hash[:], signature)
 }
 
 // ReceiveMessage 接收消息（阻塞）- 不推荐使用，建议用Subscribe
@@ -638,7 +685,41 @@ func (t *MDNSTransport) getLocalIP() net.IP {
 	return localAddr.IP
 }
 
-// splitIntoChunks 分块
+// chunkData 将数据分块
+func chunkData(data []byte, chunkSize int) [][]byte {
+	var chunks [][]byte
+	for i := 0; i < len(data); i += chunkSize {
+		end := i + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		chunks = append(chunks, data[i:end])
+	}
+	return chunks
+}
+
+// generateMessageID 生成消息ID
+func generateMessageID() string {
+	data := []byte(fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Int63()))
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:4]) // 8字符
+}
+
+// generateShortID 生成短ID
+func generateShortID() string {
+	data := []byte(fmt.Sprintf("%d", time.Now().UnixNano()))
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:3]) // 6字符
+}
+
+// generateSessionID 生成会话ID
+func generateSessionID() string {
+	data := []byte(fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Int63()))
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:6]) // 12字符
+}
+
+// splitIntoChunks 字符串分块（保留用于兼容）
 func splitIntoChunks(s string, chunkSize int) []string {
 	var chunks []string
 	for i := 0; i < len(s); i += chunkSize {

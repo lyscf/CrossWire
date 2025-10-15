@@ -244,6 +244,10 @@ func (am *AuthManager) sendJoinResponse(to string, success bool, errorMsg string
 			"id":       memberID,
 			"nickname": nickname,
 		}
+		// 附带服务器公钥（用于 ARP 模式验签）。JSON 将 []byte 编码为 base64 字符串
+		if len(response.ServerPublicKey) > 0 {
+			resp["server_public_key"] = response.ServerPublicKey
+		}
 		// 附带成员列表，便于客户端初始本地化
 		list := make([]map[string]interface{}, 0, len(response.MemberList))
 		for _, mi := range response.MemberList {

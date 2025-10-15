@@ -266,10 +266,3 @@ func (m *Manager) DecryptMessage(ciphertext []byte) ([]byte, error) {
 	}
 	return m.AESDecrypt(ciphertext, m.channelKey)
 }
-
-// TODO: 实现以下功能
-// - 密钥轮换
-// - 密钥缓存管理
-// - 文件加密/解密（分块）
-// - HMAC签名
-// - 更多密钥派生函数

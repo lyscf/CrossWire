@@ -767,16 +767,23 @@ func (mr *MessageRouter) HandleSyncRequest(transportMsg *transport.Message) {
 	if ts, ok := req["last_timestamp"].(float64); ok {
 		lastTimestamp = int64(ts)
 	}
+	// 增量成员时间水位（可选）
+	lastMemberTs := int64(0)
+	if ts, ok := req["last_member_timestamp"].(float64); ok {
+		lastMemberTs = int64(ts)
+	}
 	limit := 100 // 默认限制
 	if l, ok := req["limit"].(float64); ok {
 		limit = int(l)
 	}
+	// 关联ID（可选）
+	requestID, _ := req["request_id"].(string)
 
 	mr.server.logger.Debug("[MessageRouter] Sync params: lastMessageID=%s, lastTimestamp=%d, limit=%d",
 		lastMessageID, lastTimestamp, limit)
 
 	// 5. 构建响应（携带 lastMessageID 以避免同秒丢失）
-	response, err := mr.buildSyncResponse(memberID, lastTimestamp, lastMessageID, limit)
+	response, err := mr.buildSyncResponse(memberID, lastTimestamp, lastMessageID, lastMemberTs, requestID, limit)
 	if err != nil {
 		mr.server.logger.Error("[MessageRouter] Failed to build sync response: %v", err)
 		return
@@ -812,7 +819,7 @@ func (mr *MessageRouter) HandleSyncRequest(transportMsg *transport.Message) {
 }
 
 // buildSyncResponse 构建同步响应
-func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64, lastMessageID string, limit int) (map[string]interface{}, error) {
+func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64, lastMessageID string, lastMemberTs int64, requestID string, limit int) (map[string]interface{}, error) {
 	response := make(map[string]interface{})
 
 	// 1. 获取消息更新
@@ -821,8 +828,8 @@ func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64,
 		return nil, fmt.Errorf("[MessageRouter] Failed to get messages: %w", err)
 	}
 
-	// 2. 获取成员更新
-	members, err := mr.getMemberUpdates(lastTimestamp)
+	// 2. 获取成员更新（基于 lastMemberTs 增量）
+	members, err := mr.getMemberUpdates(lastMemberTs)
 	if err != nil {
 		return nil, fmt.Errorf("[MessageRouter] Failed to get members: %w", err)
 	}
@@ -840,14 +847,25 @@ func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64,
 		return nil, fmt.Errorf("[MessageRouter] Failed to get channel: %w", err)
 	}
 
+	// 3.5 获取子频道列表（题目子频道）
+	subChannels, err := mr.server.channelRepo.GetSubChannels(mr.server.config.ChannelID)
+	if err != nil {
+		mr.server.logger.Warn("[MessageRouter] Failed to get sub-channels: %v", err)
+		subChannels = nil
+	}
+
 	// 4. 构造响应
 	response["type"] = "sync.response"
+	if requestID != "" {
+		response["request_id"] = requestID
+	}
 	response["channel_id"] = mr.server.config.ChannelID
 	response["timestamp"] = time.Now().Unix()
 	response["messages"] = messages
 	response["members"] = members
 	response["challenges"] = challenges
 	response["channel"] = channel
+	response["sub_channels"] = subChannels
 	response["has_more"] = hasMoreMessages
 
 	// 5. 如果有离线消息，一并发送
@@ -908,23 +926,36 @@ func (mr *MessageRouter) getMessagesSince(sinceTimestamp int64, lastMessageID st
 
 // getMemberUpdates 获取成员更新
 func (mr *MessageRouter) getMemberUpdates(sinceTimestamp int64) ([]interface{}, error) {
-	// 获取所有成员（简化处理）
-	allMembers, err := mr.server.channelManager.GetMembers()
+	sinceTime := time.Unix(sinceTimestamp, 0)
+
+	// 从数据库获取所有成员
+	all, err := mr.server.memberRepo.GetByChannelID(mr.server.config.ChannelID)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: 如果需要增量更新，可以根据 UpdatedAt 字段过滤
-
-	// 转换为interface{}切片
-	members := make([]interface{}, len(allMembers))
-	for i, member := range allMembers {
-		members[i] = member
+	// 依据 LastSeenAt/LastHeartbeat/JoinedAt 任一时间做增量过滤（择优最大）
+	filtered := make([]*models.Member, 0, len(all))
+	for _, m := range all {
+		t := m.JoinedAt
+		if m.LastSeenAt.After(t) {
+			t = m.LastSeenAt
+		}
+		if m.LastHeartbeat.After(t) {
+			t = m.LastHeartbeat
+		}
+		if t.After(sinceTime) || t.Equal(sinceTime) {
+			filtered = append(filtered, m)
+		}
 	}
 
-	mr.server.logger.Debug("[MessageRouter] Sending %d members", len(members))
-
-	return members, nil
+	// 转换为interface{}
+	out := make([]interface{}, len(filtered))
+	for i, m := range filtered {
+		out[i] = m
+	}
+	mr.server.logger.Debug("[MessageRouter] Sending %d incremental members since %v", len(out), sinceTime)
+	return out, nil
 }
 
 // GetSyncStats 获取同步统计

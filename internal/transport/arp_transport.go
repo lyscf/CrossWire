@@ -382,10 +382,17 @@ func (t *ARPTransport) SendMessage(msg *Message) error {
 	}
 }
 
-// sendToServer 客户端单播给服务器
+// sendToServer 客户端发送给服务器（支持广播和单播）
 func (t *ARPTransport) sendToServer(msg *Message) error {
-	if !t.connected {
-		return fmt.Errorf("not connected to server")
+	// 决定目标MAC：如果已连接且知道服务器MAC，使用单播；否则使用广播
+	broadcastMAC, _ := net.ParseMAC(BroadcastMAC)
+	var dstMAC net.HardwareAddr
+	if t.connected && t.serverMAC != nil {
+		// 单播模式（已知服务器地址）
+		dstMAC = t.serverMAC
+	} else {
+		// 广播模式（不知道服务器地址）
+		dstMAC = broadcastMAC
 	}
 
 	// 分块
@@ -394,7 +401,7 @@ func (t *ARPTransport) sendToServer(msg *Message) error {
 	frames := make([]*ARPFrame, 0, len(chunks))
 	for i, p := range chunks {
 		f := &ARPFrame{
-			DstMAC:      t.serverMAC,
+			DstMAC:      dstMAC,
 			SrcMAC:      t.localMAC,
 			EtherType:   EtherTypeCustom,
 			Version:     uint8(ProtocolVersion),
@@ -409,8 +416,10 @@ func (t *ARPTransport) sendToServer(msg *Message) error {
 		frames = append(frames, f)
 	}
 
-	// 如需ACK，进行发送-等待-重传机制（仅对单播）
-	needAck := t.config != nil && t.config.MaxRetries > 0
+	// 如需ACK，进行发送-等待-重传机制（仅对单播且配置了重试）
+	// 广播模式不等待ACK
+	isBroadcast := bytes.Equal(dstMAC, broadcastMAC)
+	needAck := !isBroadcast && t.config != nil && t.config.MaxRetries > 0
 	var ackCh chan struct{}
 	if needAck {
 		ackCh = t.registerPendingAck(seq, frames)
@@ -423,6 +432,7 @@ func (t *ARPTransport) sendToServer(msg *Message) error {
 		}
 	}
 
+	// 广播模式直接返回，不等待ACK
 	if !needAck {
 		return nil
 	}
@@ -662,9 +672,10 @@ func (t *ARPTransport) handleFrame(frame *ARPFrame) {
 		}
 
 	} else if t.mode == "server" {
-		// 服务器模式：接收客户端单播的消息
-		// 检查是否发给自己
-		if !bytes.Equal(frame.DstMAC, t.localMAC) {
+		// 服务器模式：接收客户端的消息（单播或广播）
+		// 检查是否发给自己或广播
+		broadcastMAC, _ := net.ParseMAC(BroadcastMAC)
+		if !bytes.Equal(frame.DstMAC, t.localMAC) && !bytes.Equal(frame.DstMAC, broadcastMAC) {
 			return
 		}
 
@@ -699,22 +710,25 @@ func (t *ARPTransport) handleFrame(frame *ARPFrame) {
 			go t.handler(msg)
 		}
 
-		// 回ACK（仅对单播数据帧）
+		// 回ACK（仅对单播数据帧，不对广播帧回复ACK）
 		if MessageType(frame.FrameType) == MessageTypeData || MessageType(frame.FrameType) == MessageTypeControl || MessageType(frame.FrameType) == MessageTypeAuth {
-			ack := &ARPFrame{
-				DstMAC:      frame.SrcMAC,
-				SrcMAC:      t.localMAC,
-				EtherType:   EtherTypeCustom,
-				Version:     uint8(ProtocolVersion),
-				FrameType:   uint8(MessageTypeACK),
-				Sequence:    frame.Sequence,
-				TotalChunks: 1,
-				ChunkIndex:  0,
-				Payload:     nil,
+			// 只对单播帧回复ACK（目标是服务器自己的MAC，而非广播）
+			if bytes.Equal(frame.DstMAC, t.localMAC) {
+				ack := &ARPFrame{
+					DstMAC:      frame.SrcMAC,
+					SrcMAC:      t.localMAC,
+					EtherType:   EtherTypeCustom,
+					Version:     uint8(ProtocolVersion),
+					FrameType:   uint8(MessageTypeACK),
+					Sequence:    frame.Sequence,
+					TotalChunks: 1,
+					ChunkIndex:  0,
+					Payload:     nil,
+				}
+				ack.Checksum = crc32.ChecksumIEEE([]byte{})
+				ack.PayloadLen = 0
+				_ = t.sendRawFrame(ack)
 			}
-			ack.Checksum = crc32.ChecksumIEEE([]byte{})
-			ack.PayloadLen = 0
-			_ = t.sendRawFrame(ack)
 		}
 	}
 }

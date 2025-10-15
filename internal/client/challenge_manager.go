@@ -292,27 +292,8 @@ func (cm *ChallengeManager) handleChallengeCreated(event *events.Event) {
 
 // syncSubChannel 同步子频道信息（从服务端查询并保存到本地）
 func (cm *ChallengeManager) syncSubChannel(subChannelID string) {
-	// 最小实现：若本地没有该子频道记录，则创建占位频道，避免前端查不到
-	if subChannelID == "" {
-		return
-	}
-	if _, err := cm.client.channelRepo.GetByID(subChannelID); err == nil {
-		return
-	}
-	placeholder := &models.Channel{
-		ID:              subChannelID,
-		Name:            "Challenge Room",
-		ParentChannelID: cm.client.GetChannelID(),
-		TransportMode:   cm.client.config.TransportMode,
-		CreatedAt:       time.Now(),
-		CreatorID:       cm.client.memberID,
-		MaxMembers:      100,
-		EncryptionKey:   []byte{},
-		KeyVersion:      1,
-		UpdatedAt:       time.Now(),
-	}
-	_ = cm.client.db.CreateChannel(placeholder)
-	cm.client.logger.Debug("[ChallengeManager] Sub-channel placeholder created: %s", subChannelID)
+	// 兜底：若本地缺失且还未通过同步拿到该子频道，则不再创建占位，等待同步结果
+	_ = subChannelID
 }
 
 // handleChallengeAssigned 处理挑战分配事件

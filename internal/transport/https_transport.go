@@ -784,11 +784,3 @@ func (t *HTTPSTransport) handleInfo(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
-
-// TODO: 实现以下功能
-// - 心跳检测
-// - 自动重连
-// - 消息压缩
-// - 流量控制
-// - TLS证书验证
-// - 客户端认证

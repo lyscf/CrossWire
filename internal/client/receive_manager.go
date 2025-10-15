@@ -206,6 +206,14 @@ func (rm *ReceiveManager) handleJoinResponse(payload map[string]interface{}) {
 	// 设置成员ID
 	rm.client.SetMemberID(memberID)
 
+	// 若响应携带服务器公钥，则在 ARP 模式下启用广播验签
+	if pk, ok := payload["server_public_key"].([]byte); ok && len(pk) > 0 {
+		if rm.client.transport != nil && rm.client.transport.GetMode() == transport.TransportModeARP {
+			rm.client.SetServerPublicKey(pk)
+			rm.client.logger.Info("[ReceiveManager] Server public key received and set for ARP signature verification")
+		}
+	}
+
 	// 更新连接时间
 	rm.client.stats.mutex.Lock()
 	rm.client.stats.ConnectedAt = time.Now()

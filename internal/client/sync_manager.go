@@ -17,11 +17,22 @@ type SyncManager struct {
 	client *Client
 
 	// 同步状态
-	lastSyncTime  time.Time
-	lastMessageID string
+	lastSyncTime      time.Time
+	lastMessageID     string
+	lastMemberSync    time.Time
+	lastChallengeSync time.Time
+	// 请求关联
+	lastRequestID string
 	isSyncing     bool
 	syncMutex     sync.Mutex
 	pendingSync   bool
+
+	// 自适应同步配置
+	currentSyncInterval time.Duration
+	minSyncInterval     time.Duration
+	maxSyncInterval     time.Duration
+	consecutiveFailures int
+	lastFailureTime     time.Time
 
 	// 统计
 	stats SyncStats
@@ -41,8 +52,19 @@ type SyncStats struct {
 
 // NewSyncManager 创建同步管理器
 func NewSyncManager(client *Client) *SyncManager {
+	// 获取配置的同步间隔
+	baseInterval := client.config.SyncInterval
+	if baseInterval == 0 {
+		baseInterval = 30 * time.Second // 默认30秒
+	}
+
 	return &SyncManager{
 		client: client,
+		// 自适应同步配置
+		currentSyncInterval: baseInterval,
+		minSyncInterval:     5 * time.Second, // 最小5秒
+		maxSyncInterval:     5 * time.Minute, // 最大5分钟
+		consecutiveFailures: 0,
 	}
 }
 
@@ -83,25 +105,118 @@ func (sm *SyncManager) TriggerSync() {
 	go sm.doSync()
 }
 
-// periodicSync 定期同步
-func (sm *SyncManager) periodicSync() {
-	ticker := time.NewTicker(sm.client.config.SyncInterval)
-	defer ticker.Stop()
+// ForceSync 强制立即同步（忽略当前间隔）
+func (sm *SyncManager) ForceSync() {
+	sm.client.logger.Info("[SyncManager] Force sync triggered")
+	sm.TriggerSync()
+}
 
+// ResetSyncInterval 重置同步间隔到默认值
+func (sm *SyncManager) ResetSyncInterval() {
+	sm.syncMutex.Lock()
+	defer sm.syncMutex.Unlock()
+
+	baseInterval := sm.client.config.SyncInterval
+	if baseInterval == 0 {
+		baseInterval = 30 * time.Second
+	}
+
+	sm.currentSyncInterval = baseInterval
+	sm.consecutiveFailures = 0
+	sm.client.logger.Info("[SyncManager] Sync interval reset to %v", sm.currentSyncInterval)
+}
+
+// GetSyncStats 获取同步统计信息
+func (sm *SyncManager) GetSyncStats() map[string]interface{} {
+	sm.stats.mutex.RLock()
+	defer sm.stats.mutex.RUnlock()
+
+	sm.syncMutex.Lock()
+	currentInterval := sm.currentSyncInterval
+	consecutiveFailures := sm.consecutiveFailures
+	sm.syncMutex.Unlock()
+
+	return map[string]interface{}{
+		"total_syncs":          sm.stats.TotalSyncs,
+		"successful_syncs":     sm.stats.SuccessfulSyncs,
+		"failed_syncs":         sm.stats.FailedSyncs,
+		"messages_synced":      sm.stats.MessagesSynced,
+		"members_synced":       sm.stats.MembersSynced,
+		"last_sync_time":       sm.stats.LastSyncTime,
+		"last_sync_duration":   sm.stats.LastSyncDuration,
+		"current_interval":     currentInterval,
+		"consecutive_failures": consecutiveFailures,
+	}
+}
+
+// periodicSync 定期同步（自适应间隔）
+func (sm *SyncManager) periodicSync() {
 	for {
 		select {
 		case <-sm.client.ctx.Done():
 			return
 
-		case <-ticker.C:
+		case <-time.After(sm.getCurrentSyncInterval()):
 			sm.TriggerSync()
+		}
+	}
+}
+
+// getCurrentSyncInterval 获取当前同步间隔
+func (sm *SyncManager) getCurrentSyncInterval() time.Duration {
+	sm.syncMutex.Lock()
+	defer sm.syncMutex.Unlock()
+	return sm.currentSyncInterval
+}
+
+// adjustSyncInterval 根据同步结果调整同步间隔
+func (sm *SyncManager) adjustSyncInterval(success bool) {
+	sm.syncMutex.Lock()
+	defer sm.syncMutex.Unlock()
+
+	if success {
+		// 同步成功，重置失败计数，逐渐缩短间隔
+		sm.consecutiveFailures = 0
+		if sm.currentSyncInterval > sm.minSyncInterval {
+			// 每次成功减少10%的间隔，但不少于最小值
+			newInterval := time.Duration(float64(sm.currentSyncInterval) * 0.9)
+			if newInterval < sm.minSyncInterval {
+				newInterval = sm.minSyncInterval
+			}
+			sm.currentSyncInterval = newInterval
+			sm.client.logger.Debug("[SyncManager] Sync interval decreased to %v", sm.currentSyncInterval)
+		}
+	} else {
+		// 同步失败，增加失败计数，延长间隔
+		sm.consecutiveFailures++
+		sm.lastFailureTime = time.Now()
+
+		// 根据连续失败次数指数退避
+		multiplier := 1 << uint(sm.consecutiveFailures) // 2^n
+		if multiplier > 16 {
+			multiplier = 16 // 最大16倍
+		}
+
+		newInterval := time.Duration(multiplier) * sm.minSyncInterval
+		if newInterval > sm.maxSyncInterval {
+			newInterval = sm.maxSyncInterval
+		}
+
+		if newInterval != sm.currentSyncInterval {
+			sm.currentSyncInterval = newInterval
+			sm.client.logger.Warn("[SyncManager] Sync failed %d times, interval increased to %v",
+				sm.consecutiveFailures, sm.currentSyncInterval)
 		}
 	}
 }
 
 // doSync 执行同步
 func (sm *SyncManager) doSync() {
+	success := false
 	defer func() {
+		// 根据同步结果调整间隔
+		sm.adjustSyncInterval(success)
+
 		sm.syncMutex.Lock()
 		sm.isSyncing = false
 		pending := sm.pendingSync
@@ -122,6 +237,7 @@ func (sm *SyncManager) doSync() {
 	sm.client.logger.Debug("[SyncManager] Starting sync...")
 
 	// 1. 构造同步请求
+	reqID := generateRequestID()
 	syncReq := map[string]interface{}{
 		"type":            "sync.request",
 		"channel_id":      sm.client.config.ChannelID,
@@ -129,6 +245,7 @@ func (sm *SyncManager) doSync() {
 		"last_message_id": sm.lastMessageID,
 		"last_timestamp":  sm.lastSyncTime.Unix(),
 		"limit":           sm.client.config.MaxSyncMessages,
+		"request_id":      reqID,
 	}
 
 	// 2. 序列化并加密
@@ -166,9 +283,13 @@ func (sm *SyncManager) doSync() {
 		return
 	}
 
-	// 4. 等待响应（通过订阅机制，这里简化处理）
-	// TODO: 实现请求-响应匹配机制
-	// 暂时假设响应会通过receiveManager的handleSyncResponse处理
+	// 标记同步成功（发送成功）
+	success = true
+
+	// 4. 记录本次请求ID，用于响应关联
+	sm.syncMutex.Lock()
+	sm.lastRequestID = reqID
+	sm.syncMutex.Unlock()
 
 	// 5. 此处不再用当前时间覆盖 lastSyncTime，
 	//    让 processSyncMessages 基于消息时间推进水位
@@ -197,6 +318,22 @@ func (sm *SyncManager) HandleSyncResponse(data []byte) {
 		return
 	}
 
+	// 关联ID校验（若存在）
+	if rid, _ := response["request_id"].(string); rid != "" {
+		sm.syncMutex.Lock()
+		ok := (rid == sm.lastRequestID)
+		sm.syncMutex.Unlock()
+		if !ok {
+			sm.client.logger.Debug("[SyncManager] Ignoring out-of-date sync response: %s", rid)
+			return
+		}
+	}
+
+	// 0. 处理主频道信息，确保本地有真实记录
+	if chObj, ok := response["channel"].(map[string]interface{}); ok {
+		sm.processSyncChannel(chObj)
+	}
+
 	// 1. 处理消息
 	if messagesData, ok := response["messages"].([]interface{}); ok {
 		sm.processSyncMessages(messagesData)
@@ -212,6 +349,11 @@ func (sm *SyncManager) HandleSyncResponse(data []byte) {
 		sm.processSyncChallenges(challengesData)
 	}
 
+	// 2.6 处理子频道列表
+	if subsData, ok := response["sub_channels"].([]interface{}); ok {
+		sm.processSyncSubChannels(subsData)
+	}
+
 	// 3. 检查是否有更多数据
 	hasMore, _ := response["has_more"].(bool)
 	if hasMore {
@@ -221,6 +363,73 @@ func (sm *SyncManager) HandleSyncResponse(data []byte) {
 	}
 
 	sm.client.logger.Info("[SyncManager] Sync response processed")
+}
+
+// processSyncChannel 处理主频道信息（避免占位）
+func (sm *SyncManager) processSyncChannel(chObj map[string]interface{}) {
+	raw, err := json.Marshal(chObj)
+	if err != nil {
+		return
+	}
+	var ch models.Channel
+	if err := json.Unmarshal(raw, &ch); err != nil {
+		sm.client.logger.Warn("[SyncManager] Failed to unmarshal channel: %v", err)
+		return
+	}
+	// 只接受当前配置频道
+	if ch.ID == "" || ch.ID != sm.client.GetChannelID() {
+		return
+	}
+	if existing, err := sm.client.channelRepo.GetByID(ch.ID); err == nil && existing != nil {
+		ch.CreatedAt = existing.CreatedAt
+		if err := sm.client.channelRepo.Update(&ch); err != nil {
+			sm.client.logger.Warn("[SyncManager] Failed to update channel %s: %v", ch.ID, err)
+		}
+	} else {
+		if err := sm.client.channelRepo.Create(&ch); err != nil {
+			sm.client.logger.Warn("[SyncManager] Failed to create channel %s: %v", ch.ID, err)
+		}
+	}
+}
+
+// processSyncSubChannels 处理同步的子频道列表
+func (sm *SyncManager) processSyncSubChannels(subsData []interface{}) {
+	sm.client.logger.Debug("[SyncManager] Processing %d sub-channels", len(subsData))
+
+	for _, chData := range subsData {
+		m, ok := chData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		raw, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+
+		var ch models.Channel
+		if err := json.Unmarshal(raw, &ch); err != nil {
+			sm.client.logger.Warn("[SyncManager] Failed to unmarshal sub-channel: %v", err)
+			continue
+		}
+
+		// 只处理当前主频道下的子频道
+		if ch.ParentChannelID == "" || ch.ParentChannelID != sm.client.GetChannelID() {
+			continue
+		}
+
+		// 入库（存在则更新，不存在则创建）
+		if existing, err := sm.client.channelRepo.GetByID(ch.ID); err == nil && existing != nil {
+			ch.CreatedAt = existing.CreatedAt
+			if err := sm.client.channelRepo.Update(&ch); err != nil {
+				sm.client.logger.Warn("[SyncManager] Failed to update sub-channel %s: %v", ch.ID, err)
+			}
+		} else {
+			if err := sm.client.channelRepo.Create(&ch); err != nil {
+				sm.client.logger.Warn("[SyncManager] Failed to create sub-channel %s: %v", ch.ID, err)
+			}
+		}
+	}
 }
 
 // processSyncMessages 处理同步的消息
@@ -308,6 +517,8 @@ func (sm *SyncManager) processSyncMembers(membersData []interface{}) {
 
 	var syncedCount uint64
 
+	// 追踪本批次增量水位（使用 LastSeenAt/LastHeartbeat/JoinedAt 最大值）
+	maxTs := sm.lastMemberSync
 	for _, memberData := range membersData {
 		memberMap, ok := memberData.(map[string]interface{})
 		if !ok {
@@ -337,13 +548,6 @@ func (sm *SyncManager) processSyncMembers(membersData []interface{}) {
 			sm.client.logger.Warn("[SyncManager] Member %s missing channel_id; skipping", member.ID)
 			continue
 		}
-		if _, err := sm.client.channelRepo.GetByID(member.ChannelID); err != nil {
-			sm.client.logger.Warn("[SyncManager] Channel %s not found locally before member upsert; attempting to ensure initialization", member.ChannelID)
-			// 尝试确保频道初始化（占位频道 + system 成员）
-			if e2 := sm.client.db.OpenChannelDB(member.ChannelID); e2 != nil {
-				sm.client.logger.Warn("[SyncManager] Reopen channel DB %s failed: %v", member.ChannelID, e2)
-			}
-		}
 
 		// 检查是否已存在
 		existing, err := sm.client.memberRepo.GetByID(member.ID)
@@ -368,11 +572,28 @@ func (sm *SyncManager) processSyncMembers(membersData []interface{}) {
 				syncedCount++
 			}
 		}
+
+		// 推进成员水位
+		t := member.JoinedAt
+		if member.LastSeenAt.After(t) {
+			t = member.LastSeenAt
+		}
+		if member.LastHeartbeat.After(t) {
+			t = member.LastHeartbeat
+		}
+		if t.After(maxTs) {
+			maxTs = t
+		}
 	}
 
 	sm.stats.mutex.Lock()
 	sm.stats.MembersSynced += syncedCount
 	sm.stats.mutex.Unlock()
+
+	// 更新成员增量水位
+	if maxTs.After(sm.lastMemberSync) {
+		sm.lastMemberSync = maxTs
+	}
 
 	sm.client.logger.Info("[SyncManager] Synced %d members", syncedCount)
 }
@@ -476,4 +697,9 @@ func (sm *SyncManager) GetLastSyncTime() time.Time {
 // GetLastMessageID 获取最后消息ID
 func (sm *SyncManager) GetLastMessageID() string {
 	return sm.lastMessageID
+}
+
+// generateRequestID 生成同步请求关联ID
+func generateRequestID() string {
+	return time.Now().Format("20060102150405.000000000")
 }

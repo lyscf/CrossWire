@@ -890,7 +890,34 @@ func (s *Server) UpdateChallenge(challenge *models.Challenge) error {
 
 // DeleteChallenge 删除题目
 func (s *Server) DeleteChallenge(challengeID string) error {
-	return s.challengeRepo.Delete(challengeID)
+	// 获取题目信息
+	challenge, err := s.challengeRepo.GetByID(challengeID)
+	if err != nil {
+		return fmt.Errorf("failed to get challenge: %w", err)
+	}
+
+	// 删除对应的子频道
+	if challenge.SubChannelID != "" {
+		if err := s.channelRepo.Delete(challenge.SubChannelID); err != nil {
+			s.logger.Warn("[Server] Failed to delete sub-channel %s: %v", challenge.SubChannelID, err)
+			// 不返回错误，继续删除题目
+		} else {
+			s.logger.Info("[Server] Deleted sub-channel: %s", challenge.SubChannelID)
+		}
+	}
+
+	// 删除题目
+	if err := s.challengeRepo.Delete(challengeID); err != nil {
+		return fmt.Errorf("failed to delete challenge: %w", err)
+	}
+
+	s.logger.Info("[Server] Challenge deleted: %s (%s)", challenge.Title, challengeID)
+
+	// 发布事件
+	s.eventBus.Publish(events.EventChallengeDeleted, events.NewChallengeEvent(
+		events.EventChallengeDeleted, challenge, "", s.config.ChannelID, "deleted", nil))
+
+	return nil
 }
 
 // AssignChallenge 分配题目

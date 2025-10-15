@@ -27,7 +27,7 @@
         </div>
 
         <a-menu
-          v-model:selectedKeys="selectedChannels"
+          :selectedKeys="[currentChannelID]"
           mode="inline"
           theme="light"
           :inline-collapsed="collapsed"
@@ -39,6 +39,21 @@
             <span>主频道</span>
           </a-menu-item>
 
+          <!-- 子频道列表 -->
+          <a-menu-item
+            v-for="channel in channelStore.subChannels"
+            :key="channel.id"
+            @click="handleChannelSelect(channel.id)"
+          >
+            <template #icon>
+              <CodeOutlined />
+            </template>
+            <span>{{ channel.name }}</span>
+            <span v-if="channel.unreadCount > 0" class="unread-badge">
+              {{ channel.unreadCount }}
+            </span>
+          </a-menu-item>
+
           <a-menu-divider />
 
           <a-menu-item key="challenges" @click="goToChallenges">
@@ -48,18 +63,6 @@
             <span>题目管理</span>
           </a-menu-item>
 
-          <a-menu-divider />
-
-          <!-- 题目频道列表 -->
-          <a-menu-item-group v-if="!collapsed && subChannels.length > 0" title="题目频道">
-            <a-menu-item v-for="channel in subChannels" :key="channel.id" @click="handleChannelSelect(channel.id)">
-              <template #icon>
-                <CodeOutlined />
-              </template>
-              <span>{{ channel.name }}</span>
-              <a-badge v-if="channel.message_count > 0" :count="channel.message_count" :offset="[10, 0]" />
-            </a-menu-item>
-          </a-menu-item-group>
         </a-menu>
 
         <div v-if="!collapsed" class="sider-footer">
@@ -172,25 +175,26 @@ import FileManager from '@/components/FileManager.vue'
 import UserProfile from '@/components/UserProfile.vue'
 import Settings from '@/components/Settings.vue'
 import { useMemberStore } from '@/stores/member'
+import { useChannelStore } from '@/stores/channel'
 
 const router = useRouter()
 const route = useRoute()
 const collapsed = ref(false)
-const selectedChannels = ref(['main'])
-const currentChannelID = ref('main')
-const currentChannelLabel = computed(() => currentChannelID.value === 'main' ? '主频道' : (subChannels.value.find(ch => ch.id === currentChannelID.value)?.name || '子频道'))
 const memberDrawerVisible = ref(false)
 const fileManagerVisible = ref(false)
 const userProfileVisible = ref(false)
 const settingsVisible = ref(false)
 const channelName = ref('CTF-Team-2025')
 
-// 当前用户信息
-const currentUser = ref({
-  id: 'me',
-  name: 'admin',
-  email: 'admin@example.com',
-  role: 'admin'
+// 使用统一的频道状态管理
+const channelStore = useChannelStore()
+const memberStore = useMemberStore()
+
+// 当前选中的频道ID和标签
+const currentChannelID = computed(() => channelStore.selectedChannelId)
+const currentChannelLabel = computed(() => {
+  const channel = channelStore.selectedChannel
+  return channel ? channel.name : '未知频道'
 })
 
 // 真实数据（从后端加载）
@@ -201,8 +205,6 @@ const hasMore = ref(true)
 const pageSize = 200
 const currentOffset = ref(0)
 const members = ref([])
-const subChannels = ref([])
-const memberStore = useMemberStore()
 const lastEventAt = ref(Date.now())
 let pollTimer = null
 
@@ -288,8 +290,7 @@ onMounted(async () => {
   // 如果路由带有 channel 参数，切换到该子频道
   const ch = route.query.channel
   if (typeof ch === 'string' && ch) {
-    currentChannelID.value = ch
-    selectedChannels.value = [ch]
+    channelStore.selectChannel(ch)
   }
   
   // 加载消息
@@ -361,11 +362,8 @@ onMounted(async () => {
     const channelList = await getSubChannels()
     console.log('Loaded sub-channels:', channelList)
     if (Array.isArray(channelList)) {
-      subChannels.value = channelList.map(ch => ({
-        id: ch.id || ch.ID,
-        name: ch.name || ch.Name,
-        message_count: ch.message_count || ch.MessageCount || 0
-      }))
+      // 使用统一的频道状态管理
+      channelStore.setSubChannels(channelList)
     }
   } catch (e) {
     console.error('Failed to load sub-channels:', e)
@@ -513,8 +511,8 @@ onUnmounted(() => {
 })
 
 const handleChannelSelect = async (channelId) => {
-  currentChannelID.value = channelId
-  selectedChannels.value = [channelId]
+  // 使用统一的频道状态管理
+  channelStore.selectChannel(channelId)
   // 重新加载该频道的消息
   try {
     await reloadChannelMessages()

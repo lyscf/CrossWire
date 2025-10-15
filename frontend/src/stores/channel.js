@@ -12,18 +12,24 @@ export const useChannelStore = defineStore('channel', () => {
     memberCount: 0
   })
 
-  // 频道列表（包括主频道和题目频道）
-  const channels = ref([
-    {
-      id: 'main',
-      name: '主频道',
-      type: 'main',
-      unreadCount: 0
-    }
-  ])
+  // 主频道信息
+  const mainChannel = ref({
+    id: 'main',
+    name: '主频道',
+    type: 'main',
+    unreadCount: 0
+  })
+
+  // 子频道列表（题目频道）
+  const subChannels = ref([])
 
   // 当前选中的频道 ID
   const selectedChannelId = ref('main')
+
+  // 所有频道列表（主频道 + 子频道）
+  const channels = computed(() => {
+    return [mainChannel.value, ...subChannels.value]
+  })
 
   // Getters
   const selectedChannel = computed(() => {
@@ -48,20 +54,59 @@ export const useChannelStore = defineStore('channel', () => {
     }
   }
 
-  const addChannel = (channel) => {
-    const exists = channels.value.find(c => c.id === channel.id)
+  // 子频道管理
+  const setSubChannels = (channelList) => {
+    subChannels.value = channelList.map(ch => ({
+      id: ch.id || ch.ID,
+      name: ch.name || ch.Name,
+      type: 'sub',
+      message_count: ch.message_count || ch.MessageCount || 0,
+      unreadCount: 0
+    }))
+  }
+
+  const addSubChannel = (channel) => {
+    const exists = subChannels.value.find(c => c.id === channel.id)
     if (!exists) {
-      channels.value.push({
-        ...channel,
+      subChannels.value.push({
+        id: channel.id,
+        name: channel.name,
+        type: 'sub',
+        message_count: channel.message_count || 0,
         unreadCount: 0
       })
     }
   }
 
-  const removeChannel = (channelId) => {
-    const index = channels.value.findIndex(c => c.id === channelId)
+  const removeSubChannel = (channelId) => {
+    const index = subChannels.value.findIndex(c => c.id === channelId)
     if (index !== -1) {
-      channels.value.splice(index, 1)
+      subChannels.value.splice(index, 1)
+    }
+  }
+
+  const updateSubChannel = (channelId, updates) => {
+    const channel = subChannels.value.find(c => c.id === channelId)
+    if (channel) {
+      Object.assign(channel, updates)
+    }
+  }
+
+  // 兼容性方法
+  const addChannel = (channel) => {
+    if (channel.type === 'main') {
+      Object.assign(mainChannel.value, channel)
+    } else {
+      addSubChannel(channel)
+    }
+  }
+
+  const removeChannel = (channelId) => {
+    if (channelId === 'main') {
+      // 主频道不能删除，只重置
+      reset()
+    } else {
+      removeSubChannel(channelId)
     }
   }
 
@@ -81,25 +126,37 @@ export const useChannelStore = defineStore('channel', () => {
       maxMembers: 50,
       memberCount: 0
     }
-    channels.value = [
-      {
-        id: 'main',
-        name: '主频道',
-        type: 'main',
-        unreadCount: 0
-      }
-    ]
+    mainChannel.value = {
+      id: 'main',
+      name: '主频道',
+      type: 'main',
+      unreadCount: 0
+    }
+    subChannels.value = []
     selectedChannelId.value = 'main'
   }
 
   return {
+    // 状态
     currentChannel,
+    mainChannel,
+    subChannels,
     channels,
     selectedChannelId,
+    
+    // Getters
     selectedChannel,
     totalUnreadCount,
+    
+    // Actions
     setCurrentChannel,
     selectChannel,
+    setSubChannels,
+    addSubChannel,
+    removeSubChannel,
+    updateSubChannel,
+    
+    // 兼容性方法
     addChannel,
     removeChannel,
     incrementUnreadCount,
