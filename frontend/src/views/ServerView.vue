@@ -220,7 +220,7 @@ const interfaces = ref([])
 const serverConfig = reactive({
   channelName: `CTF-Team-${new Date().getFullYear()}`,
   password: '',
-  transportMode: 'arp',
+  transportMode: 'https',
   port: 8443,
   interface: '',
   maxMembers: 50,
