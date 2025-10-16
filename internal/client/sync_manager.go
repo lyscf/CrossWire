@@ -381,11 +381,35 @@ func (sm *SyncManager) processSyncChannel(chObj map[string]interface{}) {
 		return
 	}
 	if existing, err := sm.client.channelRepo.GetByID(ch.ID); err == nil && existing != nil {
+		// 保护敏感字段：服务端不会下发这些字段，避免覆盖为 NULL
+		if len(ch.Salt) == 0 {
+			ch.Salt = existing.Salt
+		}
+		if len(ch.EncryptionKey) == 0 {
+			ch.EncryptionKey = existing.EncryptionKey
+		}
+		if ch.PasswordHash == "" {
+			ch.PasswordHash = existing.PasswordHash
+		}
+		if ch.CreatorID == "" {
+			ch.CreatorID = existing.CreatorID
+		}
 		ch.CreatedAt = existing.CreatedAt
 		if err := sm.client.channelRepo.Update(&ch); err != nil {
 			sm.client.logger.Warn("[SyncManager] Failed to update channel %s: %v", ch.ID, err)
 		}
 	} else {
+		// 创建时补齐 NOT NULL 字段的安全默认值
+		if ch.Salt == nil {
+			ch.Salt = []byte{}
+		}
+		if ch.EncryptionKey == nil {
+			ch.EncryptionKey = []byte{}
+		}
+		// PasswordHash 允许为空串（非 NULL），CreatorID 若缺失设为 server
+		if ch.CreatorID == "" {
+			ch.CreatorID = "server"
+		}
 		if err := sm.client.channelRepo.Create(&ch); err != nil {
 			sm.client.logger.Warn("[SyncManager] Failed to create channel %s: %v", ch.ID, err)
 		}
@@ -420,11 +444,34 @@ func (sm *SyncManager) processSyncSubChannels(subsData []interface{}) {
 
 		// 入库（存在则更新，不存在则创建）
 		if existing, err := sm.client.channelRepo.GetByID(ch.ID); err == nil && existing != nil {
+			// 保护敏感字段，避免被服务端未下发字段覆盖为 NULL
+			if len(ch.Salt) == 0 {
+				ch.Salt = existing.Salt
+			}
+			if len(ch.EncryptionKey) == 0 {
+				ch.EncryptionKey = existing.EncryptionKey
+			}
+			if ch.PasswordHash == "" {
+				ch.PasswordHash = existing.PasswordHash
+			}
+			if ch.CreatorID == "" {
+				ch.CreatorID = existing.CreatorID
+			}
 			ch.CreatedAt = existing.CreatedAt
 			if err := sm.client.channelRepo.Update(&ch); err != nil {
 				sm.client.logger.Warn("[SyncManager] Failed to update sub-channel %s: %v", ch.ID, err)
 			}
 		} else {
+			// 创建时补齐 NOT NULL 字段
+			if ch.Salt == nil {
+				ch.Salt = []byte{}
+			}
+			if ch.EncryptionKey == nil {
+				ch.EncryptionKey = []byte{}
+			}
+			if ch.CreatorID == "" {
+				ch.CreatorID = "server"
+			}
 			if err := sm.client.channelRepo.Create(&ch); err != nil {
 				sm.client.logger.Warn("[SyncManager] Failed to create sub-channel %s: %v", ch.ID, err)
 			}
