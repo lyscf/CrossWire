@@ -415,7 +415,7 @@ conn.WriteMessage(websocket.BinaryMessage, msgData)
 
 ## 🎯 为什么使用三层保护？
 
-### 深度防御原则
+### 纵深防御原则
 
 ```
 ┌──────────────────────────────────────┐
@@ -628,6 +628,7 @@ reconnectMaxDelay: 15 * time.Second  // 最多15秒
 **场景:**
 - 局域网客户端使用ARP（高隐蔽性）
 - 远程客户端使用HTTPS（互联网接入）
+- 极端受限网络使用mDNS (协议伪装) 
 - 服务器同时支持两种模式
 
 ---

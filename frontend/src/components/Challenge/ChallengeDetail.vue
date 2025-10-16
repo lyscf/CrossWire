@@ -329,14 +329,12 @@ const handleProgressChange = (value) => {
 }
 
 const goToRoom = () => {
-  // 如果有子频道ID，则切换 ChatView 的当前频道；否则回退为抽屉
+  // 始终跳转到聊天主页，不再打开抽屉
   const subId = props.challenge?.sub_channel_id || props.challenge?.SubChannelID
-  if (subId) {
-    // 通过 hash 路由附带参数，ChatView 可读取并切换
-    window.location.hash = `#/chat?channel=${encodeURIComponent(subId)}`
-  } else {
-    showRoomDrawer.value = true
-  }
+  const url = subId
+    ? `#/chat?channel=${encodeURIComponent(subId)}`
+    : '#/chat'
+  window.location.hash = url
 }
 
 const copyFlag = async () => {

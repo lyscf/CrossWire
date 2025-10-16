@@ -445,6 +445,10 @@ func (rm *ReceiveManager) handleDataMessage(data []byte) {
 					}
 					ch.Status = "solved"
 					ch.SolvedAt = time.Now()
+					// 若广播携带 flag，则回写到本地题目，确保刷新后仍可见
+					if f, ok2 := extra["flag"].(string); ok2 && f != "" {
+						ch.Flag = f
+					}
 					_ = rm.client.challengeRepo.Update(ch)
 					if actorID != "" {
 						_ = rm.client.challengeRepo.UpdateProgress(&models.ChallengeProgress{

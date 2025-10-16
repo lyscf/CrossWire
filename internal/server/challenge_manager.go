@@ -213,6 +213,8 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 			challenge.SolvedAt = time.Now()
 		}
 		challenge.Status = "solved"
+		// 覆盖更新题目上的 Flag（协作平台：Flag 明文对所有人可见）
+		challenge.Flag = submission.Flag
 
 		cm.server.logger.Debug("[HandleFlagSubmission] Updating challenge: SolvedBy=%v Status=%s", challenge.SolvedBy, challenge.Status)
 		if err := cm.server.challengeRepo.Update(challenge); err != nil {
@@ -221,6 +223,15 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 			cm.server.logger.Info("[HandleFlagSubmission] Challenge updated successfully: %s now solved by %v", challenge.Title, challenge.SolvedBy)
 		}
 	} else {
+		// 即使之前已标记 solved，也同步覆盖 Flag 以便前端刷新后可见
+		if challenge.Flag != submission.Flag {
+			challenge.Flag = submission.Flag
+			if err := cm.server.challengeRepo.Update(challenge); err != nil {
+				cm.server.logger.Error("[HandleFlagSubmission] Failed to update challenge flag: %v", err)
+			} else {
+				cm.server.logger.Info("[HandleFlagSubmission] Challenge flag updated for %s", challenge.Title)
+			}
+		}
 		cm.server.logger.Debug("[HandleFlagSubmission] Member %s already solved challenge %s", submission.MemberID, challenge.Title)
 	}
 
@@ -294,6 +305,8 @@ func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error
 			challenge.SolvedAt = time.Now()
 		}
 		challenge.Status = "solved"
+		// 覆盖更新题目上的 Flag（协作平台：Flag 明文对所有人可见）
+		challenge.Flag = flag
 
 		cm.server.logger.Debug("[ChallengeManager] Updating challenge: SolvedBy=%v Status=%s", challenge.SolvedBy, challenge.Status)
 		if err := cm.server.challengeRepo.Update(challenge); err != nil {
@@ -302,6 +315,13 @@ func (cm *ChallengeManager) SubmitFlag(challengeID, memberID, flag string) error
 		}
 		cm.server.logger.Info("[ChallengeManager] Challenge updated successfully: %s now solved by %v", challenge.Title, challenge.SolvedBy)
 	} else {
+		// 已解出情况下也同步覆盖 Flag，保证后续 GetChallenges 可见
+		if challenge.Flag != flag {
+			challenge.Flag = flag
+			if err := cm.server.challengeRepo.Update(challenge); err != nil {
+				cm.server.logger.Error("[ChallengeManager] Failed to update challenge flag: %v", err)
+			}
+		}
 		cm.server.logger.Debug("[ChallengeManager] Member %s already solved challenge %s", memberID, challenge.Title)
 	}
 

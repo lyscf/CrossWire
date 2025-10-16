@@ -13,6 +13,7 @@
             v-if="isAdmin"
             type="primary"
             size="small"
+            :disabled="!isServerMode"
             @click="showCreateModal = true"
           >
             <PlusOutlined /> 创建题目
@@ -91,6 +92,7 @@ import ChallengeList from '@/components/Challenge/ChallengeList.vue'
 import ChallengeDetail from '@/components/Challenge/ChallengeDetail.vue'
 import ChallengeCreate from '@/components/Challenge/ChallengeCreate.vue'
 import { useChallengeStore } from '@/stores/challenge'
+import { useAppStore } from '@/stores/app'
 import { 
   getChallenges, 
   createChallenge, 
@@ -101,6 +103,8 @@ import {
 } from '@/api/app'
 
 const challengeStore = useChallengeStore()
+const appStore = useAppStore()
+const isServerMode = computed(() => (appStore.mode || '').toLowerCase() === 'server')
 const isAdmin = ref(true) // 后续可从用户状态获取真实权限
 const showCreateModal = ref(false)
 const filterCategory = ref('all')

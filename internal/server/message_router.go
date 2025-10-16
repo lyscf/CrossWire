@@ -841,6 +841,30 @@ func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64,
 		challenges = nil
 	}
 
+	// 2.6 获取提交记录（全量同步，不分页）
+	var submissionsOut []interface{}
+	if challenges != nil {
+		submissionsOut = make([]interface{}, 0)
+		for _, ch := range challenges {
+			if ch == nil {
+				continue
+			}
+			subs, err2 := mr.server.challengeRepo.GetSubmissions(ch.ID)
+			if err2 != nil || len(subs) == 0 {
+				continue
+			}
+			for _, s := range subs {
+				submissionsOut = append(submissionsOut, map[string]interface{}{
+					"id":           s.ID,
+					"challenge_id": s.ChallengeID,
+					"member_id":    s.MemberID,
+					"flag":         s.Flag,
+					"submitted_at": s.SubmittedAt.Unix(),
+				})
+			}
+		}
+	}
+
 	// 3. 获取频道信息
 	channel, err := mr.server.channelManager.GetChannel()
 	if err != nil {
@@ -866,6 +890,9 @@ func (mr *MessageRouter) buildSyncResponse(memberID string, lastTimestamp int64,
 	response["challenges"] = challenges
 	response["channel"] = channel
 	response["sub_channels"] = subChannels
+	if len(submissionsOut) > 0 {
+		response["submissions"] = submissionsOut
+	}
 	response["has_more"] = hasMoreMessages
 
 	// 5. 如果有离线消息，一并发送

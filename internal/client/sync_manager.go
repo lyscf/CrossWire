@@ -354,6 +354,11 @@ func (sm *SyncManager) HandleSyncResponse(data []byte) {
 		sm.processSyncSubChannels(subsData)
 	}
 
+	// 2.7 处理提交记录（最近N条）
+	if submissionsData, ok := response["submissions"].([]interface{}); ok {
+		sm.processSyncSubmissions(submissionsData)
+	}
+
 	// 3. 检查是否有更多数据
 	hasMore, _ := response["has_more"].(bool)
 	if hasMore {
@@ -363,6 +368,42 @@ func (sm *SyncManager) HandleSyncResponse(data []byte) {
 	}
 
 	sm.client.logger.Info("[SyncManager] Sync response processed")
+}
+
+// processSyncSubmissions 处理同步的提交记录（轻量最新若干条）
+func (sm *SyncManager) processSyncSubmissions(items []interface{}) {
+	if len(items) == 0 {
+		return
+	}
+	sm.client.logger.Debug("[SyncManager] Processing %d synced submissions", len(items))
+
+	for _, it := range items {
+		m, ok := it.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// 映射到模型
+		sub := &models.ChallengeSubmission{}
+		if v, ok := m["id"].(string); ok {
+			sub.ID = v
+		}
+		if v, ok := m["challenge_id"].(string); ok {
+			sub.ChallengeID = v
+		}
+		if v, ok := m["member_id"].(string); ok {
+			sub.MemberID = v
+		}
+		if v, ok := m["flag"].(string); ok {
+			sub.Flag = v
+		}
+		if v, ok := m["submitted_at"].(float64); ok {
+			sub.SubmittedAt = time.Unix(int64(v), 0)
+		}
+
+		// 入库（幂等：若ID已存在 Save，否则 Create）
+		// 简化：尝试 Create，失败可忽略（避免复杂冲突处理）
+		_ = sm.client.challengeRepo.SubmitFlag(sub)
+	}
 }
 
 // processSyncChannel 处理主频道信息（避免占位）
