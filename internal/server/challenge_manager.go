@@ -156,7 +156,7 @@ func (cm *ChallengeManager) AssignChallenge(challengeID, memberID, assignedBy st
 
 // HandleFlagSubmission 处理Flag提交
 func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message) {
-	cm.server.logger.Debug("[ChallengeManager] HandleFlagSubmission from=%s at=%v", transportMsg.SenderID, transportMsg.Timestamp)
+	cm.server.logger.Debug("[ChallengeManager] HandleFlagSubmission received: sender=%s ts=%v payload_len=%d", transportMsg.SenderID, transportMsg.Timestamp, len(transportMsg.Payload))
 
 	// 解密消息
 	decrypted, err := cm.server.crypto.DecryptMessage(transportMsg.Payload)
@@ -164,6 +164,7 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 		cm.server.logger.Error("[ChallengeManager] Decrypt submission failed: %v", err)
 		return
 	}
+	cm.server.logger.Debug("[ChallengeManager] Submission decrypted: bytes=%d", len(decrypted))
 
 	// 反序列化提交
 	var submission models.ChallengeSubmission
@@ -171,6 +172,7 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 		cm.server.logger.Error("[ChallengeManager] Unmarshal submission failed: %v", err)
 		return
 	}
+	cm.server.logger.Debug("[ChallengeManager] Parsed submission: challenge_id=%s member=%s id=%s flag_len=%d", submission.ChallengeID, transportMsg.SenderID, submission.ID, len(submission.Flag))
 
 	// 保存提交记录（协作平台：所有提交都接受，无需验证）
 	submission.SubmittedAt = time.Now()
@@ -194,6 +196,7 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 		cm.sendSubmissionResponse(transportMsg.SenderID, false, "Challenge not found", &submission)
 		return
 	}
+	cm.server.logger.Debug("[ChallengeManager] Loaded challenge: title=%s status=%s solved_by=%d", challenge.Title, challenge.Status, len(challenge.SolvedBy))
 
 	// 添加到SolvedBy列表（如果不存在）
 	alreadySolved := false
@@ -234,8 +237,7 @@ func (cm *ChallengeManager) HandleFlagSubmission(transportMsg *transport.Message
 		cm.server.logger.Error("[ChallengeManager] Failed to update progress: %v", err)
 	}
 
-	cm.server.logger.Info("[ChallengeManager] Flag submitted: %s by %s (flag: %s)",
-		submission.ChallengeID, submission.MemberID, submission.Flag)
+	cm.server.logger.Info("[ChallengeManager] Flag submitted: challenge=%s by=%s", submission.ChallengeID, submission.MemberID)
 
 	// 发布事件（协作平台：所有提交都标记为成功）
 	cm.server.eventBus.Publish(events.EventChallengeSolved, events.NewSubmissionEvent(&submission, true, "Flag accepted"))

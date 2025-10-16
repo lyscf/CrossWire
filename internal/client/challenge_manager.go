@@ -156,23 +156,25 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 	}
 
 	// 构造提交消息
+	cm.client.logger.Debug("[ChallengeManager] Building submission payload: challengeID=%s flag_len=%d", challengeID, len(flag))
 	submission := map[string]interface{}{
 		"type":         "challenge.submit",
 		"challenge_id": challengeID,
 		"flag":         flag,
-		"submitted_at": time.Now().Unix(),
 	}
 
 	payload, err := json.Marshal(submission)
 	if err != nil {
 		return fmt.Errorf("failed to marshal submission: %w", err)
 	}
+	cm.client.logger.Debug("[ChallengeManager] Submission payload marshaled: bytes=%d", len(payload))
 
 	encrypted, err := cm.client.crypto.EncryptMessage(payload)
 	if err != nil {
 		cm.client.logger.Error("[ChallengeManager] Encrypt submission failed: %v", err)
 		return fmt.Errorf("failed to encrypt submission: %w", err)
 	}
+	cm.client.logger.Debug("[ChallengeManager] Submission encrypted: bytes=%d", len(encrypted))
 
 	// 发送提交
 	msg := &transport.Message{
@@ -182,6 +184,7 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 		Payload:   encrypted,
 		Timestamp: time.Now(),
 	}
+	cm.client.logger.Debug("[ChallengeManager] Sending control message: type=challenge.submit id=%s", msg.ID)
 
 	if err := cm.client.transport.SendMessage(msg); err != nil {
 		cm.client.logger.Error("[ChallengeManager] Send submission failed: %v", err)
