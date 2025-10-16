@@ -194,7 +194,7 @@ const appStore = useAppStore()
 const currentUser = appStore.currentUser
 
 // 当前选中的频道ID和标签
-const { selectedChannelId, selectedChannel } = storeToRefs(channelStore)
+const { selectedChannelId, selectedChannel, mainChannelId } = storeToRefs(channelStore)
 const currentChannelID = selectedChannelId
 const currentChannelLabel = computed(() => {
   const ch = selectedChannel.value
@@ -247,7 +247,9 @@ import {
   unpinMessage,
   getPinnedMessages,
   reactToMessage,
-  searchMessages
+  searchMessages,
+  getClientStatus,
+  getServerStatus
 } from '@/api/app'
 
 const handleSendMessage = async (messageData) => {
@@ -291,30 +293,26 @@ const handleDisconnect = () => {
 
 onMounted(async () => {
   console.log('ChatView mounted, loading data from backend...')
+  // 初始化真实主频道ID（客户端或服务端）
+  try {
+    try {
+      const cs = await getClientStatus()
+      if (cs && cs.channel_id) channelStore.setMainChannelId(cs.channel_id)
+    } catch {}
+    try {
+      const ss = await getServerStatus()
+      if (ss && ss.channel && ss.channel.id) channelStore.setMainChannelId(ss.channel.id)
+    } catch {}
+  } catch {}
   // 如果路由带有 channel 参数，切换到该子频道
   const ch = route.query.channel
   if (typeof ch === 'string' && ch) {
     channelStore.selectChannel(ch)
   }
   
-  // 加载消息
+  // 根据当前选择的频道加载消息
   try {
-    const list = await getMessages(pageSize, 0)
-    console.log('Loaded messages:', list)
-    if (Array.isArray(list)) {
-      // 简单映射到本地结构
-      list.forEach(m => messages.value.push({
-        id: m.id || m.ID,
-        senderId: m.sender_id || m.SenderID,
-        senderName: m.sender_name || m.SenderName || m.sender_nickname || m.SenderNickname || 'user',
-        content: extractContent(m),
-        // 后端DTO时间字段为Unix秒，这里统一转毫秒
-        timestamp: new Date(((m.edited_at || m.EditedAt || m.timestamp || m.Timestamp || 0) * 1000) || Date.now()),
-        type: (m.type || m.Type || 'text')
-      }))
-    }
-    
-    // 若无消息，保持为空，不注入预设内容
+    await reloadChannelMessages()
   } catch (e) {
     console.error('Failed to load messages:', e)
     message.warning('消息加载失败，显示本地消息')
@@ -364,15 +362,19 @@ onMounted(async () => {
     console.error('Failed to load sub-channels:', e)
     // 子频道加载失败不影响使用（可能是客户端模式）
   }
-  // 加载置顶消息
-  try {
+// 加载置顶消息（仅主频道展示）
+try {
+  if (currentChannelID.value === 'main') {
     const list = await getPinnedMessages()
     if (Array.isArray(list)) {
       pinnedMessages.value = list
     }
-  } catch (e) {
-    // ignore
+  } else {
+    pinnedMessages.value = []
   }
+} catch (e) {
+  // ignore
+}
 
   // 监听全局转发事件：实时追加收到的消息与更新
   const handler = (ev) => {
@@ -382,10 +384,16 @@ onMounted(async () => {
     const data = detail.data || {}
     const m = data.message || data.Message || null
     if (!m) return
-    const chId = m.channel_id || m.ChannelID || 'main'
+    // 归一化主频道ID用于过滤
+    const realMainId = mainChannelId?.value || ''
+    const chId = m.channel_id || m.ChannelID || realMainId || 'main'
     // 只处理当前频道
     const expectingMain = currentChannelID.value === 'main'
-    if (!expectingMain && chId !== currentChannelID.value) return
+    if (expectingMain) {
+      if (realMainId && chId !== realMainId) return
+    } else {
+      if (chId !== currentChannelID.value) return
+    }
 
     const normalized = {
       id: m.id || m.ID,
@@ -453,7 +461,11 @@ onMounted(async () => {
   // 启动轮询兜底：每5秒增量刷新一次，防止事件丢失导致不更新（尤其服务端前端）
   const refreshMessagesIncremental = async () => {
     try {
-      const list = await getMessages(pageSize, 0)
+      const channelId = currentChannelID.value
+      const useByChannel = channelId !== 'main'
+      const list = useByChannel
+        ? await getMessagesByChannel(channelId, pageSize, 0)
+        : await getMessages(pageSize, 0)
       if (!Array.isArray(list)) return
       const incoming = list.map(m => ({
         id: m.id || m.ID,
@@ -511,6 +523,17 @@ const handleChannelSelect = async (channelId) => {
   // 重新加载该频道的消息
   try {
     await reloadChannelMessages()
+    // 置顶消息：仅主频道
+    if (channelId === 'main') {
+      try {
+        const list = await getPinnedMessages()
+        pinnedMessages.value = Array.isArray(list) ? list : []
+      } catch {
+        pinnedMessages.value = []
+      }
+    } else {
+      pinnedMessages.value = []
+    }
   } catch (e) {
     message.warning('加载该频道消息失败')
   }

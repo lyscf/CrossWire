@@ -20,6 +20,9 @@ export const useChannelStore = defineStore('channel', () => {
     unreadCount: 0
   })
 
+  // 真实主频道ID（用于事件过滤和API取数）
+  const mainChannelId = ref('')
+
   // 子频道列表（题目频道）
   const subChannels = ref([])
 
@@ -52,6 +55,10 @@ export const useChannelStore = defineStore('channel', () => {
     if (channel) {
       channel.unreadCount = 0
     }
+  }
+
+  const setMainChannelId = (id) => {
+    mainChannelId.value = id || ''
   }
 
   // 子频道管理
@@ -132,6 +139,7 @@ export const useChannelStore = defineStore('channel', () => {
       type: 'main',
       unreadCount: 0
     }
+    mainChannelId.value = ''
     subChannels.value = []
     selectedChannelId.value = 'main'
   }
@@ -140,6 +148,7 @@ export const useChannelStore = defineStore('channel', () => {
     // 状态
     currentChannel,
     mainChannel,
+    mainChannelId,
     subChannels,
     channels,
     selectedChannelId,
@@ -160,6 +169,7 @@ export const useChannelStore = defineStore('channel', () => {
     addChannel,
     removeChannel,
     incrementUnreadCount,
+    setMainChannelId,
     reset
   }
 })
