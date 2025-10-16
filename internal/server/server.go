@@ -520,6 +520,9 @@ func (s *Server) handleControlMessage(msg *transport.Message) {
 		s.messageRouter.HandleFileChunk(msg)
 	case "file.download":
 		s.messageRouter.HandleFileDownloadRequest(msg)
+	case "challenge.submit":
+		// 将 Flag 提交交给 ChallengeManager 统一处理
+		s.challengeManager.HandleFlagSubmission(msg)
 	case "ack":
 		s.handleMessageAck(msg)
 	default:

@@ -177,7 +177,7 @@ func (cm *ChallengeManager) SubmitFlag(challengeID string, flag string) error {
 	// 发送提交
 	msg := &transport.Message{
 		ID:        uuid.New().String(),
-		Type:      transport.MessageTypeData,
+		Type:      transport.MessageTypeControl,
 		SenderID:  cm.client.memberID,
 		Payload:   encrypted,
 		Timestamp: time.Now(),
