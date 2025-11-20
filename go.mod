@@ -1,6 +1,6 @@
 module crosswire
 
-go 1.23.0
+go 1.24.0
 
 require (
 	github.com/google/gopacket v1.1.19
@@ -9,7 +9,7 @@ require (
 	github.com/hashicorp/mdns v1.0.6
 	github.com/miekg/dns v1.1.55
 	github.com/wailsapp/wails/v2 v2.10.2
-	golang.org/x/crypto v0.36.0
+	golang.org/x/crypto v0.45.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.0
 )
@@ -39,10 +39,10 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.19 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/mod v0.23.0 // indirect
-	golang.org/x/net v0.38.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/tools v0.30.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/tools v0.38.0 // indirect
 )
